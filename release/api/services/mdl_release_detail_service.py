@@ -8,7 +8,10 @@ import time
 import yaml
 import os, django
 
-import ansible_runner
+try:
+    import ansible_runner
+except ImportError:
+    ansible_runner = None
 
 from external.consul_client import ConsulClient
 from external.gitlab_client import GitlabClient

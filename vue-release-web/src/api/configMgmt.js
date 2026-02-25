@@ -5,7 +5,7 @@ import request from '@/utils/request'
  */
 export function getConfigTree(params) {
   return request({
-    url: '/api/config-mgmt/tree/',
+    url: '/config-mgmt/tree/',
     method: 'get',
     params
   })
@@ -16,7 +16,7 @@ export function getConfigTree(params) {
  */
 export function getConfigs(params) {
   return request({
-    url: '/api/config-mgmt/configs/',
+    url: '/config-mgmt/configs/',
     method: 'get',
     params
   })
@@ -27,7 +27,7 @@ export function getConfigs(params) {
  */
 export function getConfigDetail(id) {
   return request({
-    url: `/api/config-mgmt/configs/${id}/`,
+    url: `/config-mgmt/configs/${id}/`,
     method: 'get'
   })
 }
@@ -37,7 +37,7 @@ export function getConfigDetail(id) {
  */
 export function updateConfig(id, data) {
   return request({
-    url: `/api/config-mgmt/configs/${id}/`,
+    url: `/config-mgmt/configs/${id}/`,
     method: 'put',
     data
   })
@@ -48,7 +48,7 @@ export function updateConfig(id, data) {
  */
 export function batchUpdateConfig(data) {
   return request({
-    url: '/api/config-mgmt/configs/batch_update/',
+    url: '/config-mgmt/configs/batch_update/',
     method: 'post',
     data
   })
@@ -60,7 +60,7 @@ export function batchUpdateConfig(data) {
  */
 export function getConfigSchema(params) {
   return request({
-    url: '/api/config-mgmt/configs/schema/',
+    url: '/config-mgmt/configs/schema/',
     method: 'get',
     params
   })
@@ -71,7 +71,7 @@ export function getConfigSchema(params) {
  */
 export function syncFromGitlab() {
   return request({
-    url: '/api/config-mgmt/sync/',
+    url: '/config-mgmt/sync/',
     method: 'post'
   })
 }
@@ -82,7 +82,7 @@ export function syncFromGitlab() {
  */
 export function gitCommit(data) {
   return request({
-    url: '/api/config-mgmt/configs/git_commit/',
+    url: '/config-mgmt/configs/git_commit/',
     method: 'post',
     data
   })
@@ -94,7 +94,7 @@ export function gitCommit(data) {
  */
 export function pushConsul(data) {
   return request({
-    url: '/api/config-mgmt/configs/push_consul/',
+    url: '/config-mgmt/configs/push_consul/',
     method: 'post',
     data
   })

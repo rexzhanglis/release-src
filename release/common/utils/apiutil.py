@@ -40,7 +40,8 @@ class FitJSONRenderer(JSONRenderer):
 
         """
         # 处理自定义apiResponse场景
-        if isinstance(data, dict):
+        # 只有当 data 是字典且包含 'code' 字段时，才认为是已经包装好的响应
+        if isinstance(data, dict) and 'code' in data:
             return super().render(data, accepted_media_type, renderer_context)
         # 处理django rest 自带的response场景
         else:

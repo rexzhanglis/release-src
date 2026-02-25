@@ -72,10 +72,24 @@
                 <el-tag v-else size="mini" type="warning" style="margin-left:6px">各实例值不同</el-tag>
               </div>
               <div v-if="!item.allSame" class="instance-values">
-                <div v-for="(val, instName) in item.instanceValues" :key="instName" class="instance-value-row">
+                <div v-for="instName in allInstanceNames" :key="instName" class="instance-value-row">
                   <span class="inst-name">{{ instName }}</span>
-                  <span class="inst-val">{{ formatDisplay(val) }}</span>
+                  <span class="inst-val" :class="{'missing-val': item.instanceValues[instName] === undefined}">
+                    {{ item.instanceValues[instName] === undefined ? '(不存在)' : formatDisplay(item.instanceValues[instName]) }}
+                  </span>
                 </div>
+              </div>
+              <div v-else class="instance-values">
+                 <el-collapse v-model="item.activeNames">
+                   <el-collapse-item title="查看各实例当前值（全部相同）" name="1">
+                     <div v-for="instName in allInstanceNames" :key="instName" class="instance-value-row">
+                       <span class="inst-name">{{ instName }}</span>
+                       <span class="inst-val" :class="{'missing-val': item.instanceValues[instName] === undefined}">
+                         {{ item.instanceValues[instName] === undefined ? '(不存在)' : formatDisplay(item.instanceValues[instName]) }}
+                       </span>
+                     </div>
+                   </el-collapse-item>
+                 </el-collapse>
               </div>
               <el-input
                 v-model="item.newValue"
@@ -135,7 +149,8 @@ export default {
       submitting: false,
       treeData: [],
       selectedItems: [],
-      valuesMap: {}
+      valuesMap: {},
+      allInstanceNames: []
     }
   },
   methods: {
@@ -145,6 +160,7 @@ export default {
       this.treeData = []
       this.selectedItems = []
       this.valuesMap = {}
+      this.allInstanceNames = []
 
       if (!this.checkedInstanceIds.length) return
 
@@ -169,6 +185,7 @@ export default {
         this.treeData = []
         this.selectedItems = []
         this.valuesMap = {}
+        this.allInstanceNames = []
         return
       }
 
@@ -180,6 +197,14 @@ export default {
         })
         const data = res.data
         this.valuesMap = data.values_map || {}
+        
+        // 收集所有实例名
+        const names = new Set()
+        Object.values(this.valuesMap).forEach(instMap => {
+          Object.keys(instMap).forEach(n => names.add(n))
+        })
+        this.allInstanceNames = Array.from(names).sort()
+
         this.treeData = this.jsonToTree(data.schema || {}, '', '', this.valuesMap)
         this.selectedItems = []
       } catch (e) {
@@ -230,7 +255,8 @@ export default {
         currentValue: n.currentValue,
         allSame: n.allSame,
         instanceValues: n.instanceValues || {},
-        newValue: existingMap[n.path] !== undefined ? existingMap[n.path] : ''
+        newValue: existingMap[n.path] !== undefined ? existingMap[n.path] : '',
+        activeNames: [] // for collapse
       }))
     },
 
@@ -337,4 +363,5 @@ export default {
 .inst-val { color: #606266; }
 .tree-node { display: flex; align-items: center; }
 .tree-node-label { font-size: 13px; }
+.missing-val { color: #f56c6c; font-style: italic; }
 </style>

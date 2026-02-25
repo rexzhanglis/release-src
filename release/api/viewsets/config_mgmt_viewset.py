@@ -149,6 +149,23 @@ def _parse_json_safe(raw_str):
         return {'_raw': raw_str}
 
 
+def _deep_merge_schema(target, source):
+    """深度合并两个 JSON 结构（保留 target 的结构，补全 source 的字段）"""
+    if isinstance(target, dict) and isinstance(source, dict):
+        for k, v in source.items():
+            if k not in target:
+                target[k] = v
+            else:
+                _deep_merge_schema(target[k], v)
+    elif isinstance(target, list) and isinstance(source, list):
+        # List merge: 取最大长度，对应索引 deep merge
+        for i in range(min(len(target), len(source))):
+            _deep_merge_schema(target[i], source[i])
+        if len(source) > len(target):
+            target.extend(source[len(target):])
+    return target
+
+
 def _get_commit_content(config):
     """获取提交用的文件内容"""
     raw = config.raw_content
@@ -562,8 +579,13 @@ class ConfigFileViewSet(viewsets.ModelViewSet):
                 for c in file_configs
             ]
             if configs_list:
-                schema_data = configs_list[0]['content'] or {}
                 values_map = _merge_schemas(configs_list)
+                # 构建完整的 schema 结构（包含所有实例出现的 key）
+                schema_data = {}
+                for cfg in configs_list:
+                    # 使用 deep copy 避免污染
+                    content = json.loads(json.dumps(cfg.get('content') or {}))
+                    _deep_merge_schema(schema_data, content)
 
         return ApiResponse(data={'filenames': filenames, 'schema': schema_data, 'values_map': values_map})
 

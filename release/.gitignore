@@ -1,0 +1,15 @@
+##ignore this file##
+*.pyc
+*.bing
+*.log
+db.sqlite3
+cert.crt
+cert.key
+__pycache__/
+static/
+log/git
+venv/
+log/
+celerybeat-schedule.*
+.idea/
+test.py

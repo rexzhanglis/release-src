@@ -1,0 +1,21 @@
+- name: create install dir
+  file: path={{ install_dir }} state=directory owner={{ user }} group={{ user }}
+
+- name: unarchive package
+  unarchive: src=/datayes/mdl/packages/{{ package_name }} dest={{ install_dir }} owner={{ user }} group={{ user }}
+
+# - name: unarchive package
+#   unarchive: remote_src=yes src=/tmp/{{ package_name }} dest={{ install_dir }} owner={{ user }} group={{ user }}
+
+- name: move files
+  command: mv {{ install_dir }}/mdl_release/ubuntu-14.04-gcc-4.8/{{ item }} {{ install_dir }}/
+  with_items: "{{ install_items }}"
+
+- name: clean folder
+  file:
+    state: absent
+    path: "{{ install_dir }}/mdl_release"
+
+- name: put files
+  copy: src=files/{{ item }} dest={{ install_dir }} owner={{ user }} group={{ user }} mode=0644
+  with_items: "{{ put_files }}"

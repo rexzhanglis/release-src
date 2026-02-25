@@ -1,0 +1,29 @@
+import os
+import requests
+import base64
+
+CONSUL_SPACE = '{{ consul_space }}'
+CONSUL_TOKEN = os.environ['CONSUL_TOKEN']
+
+FILE_DIR = '{{ install_dir }}'
+FILE_STR = '{{ consul_files | default(None) }}'
+if FILE_STR:
+    FILES = FILE_STR.split(',')
+else:
+    FILES = ['feeder_handler.cfg']
+
+
+def get_conf():
+    headers = {'X-Consul-Token': CONSUL_TOKEN}
+    for filename in FILES:
+        r = requests.get(CONSUL_SPACE + filename, headers=headers)
+        if r.status_code == 200:
+            value = base64.b64decode(r.json()[0]['Value'])
+            with open(os.path.join(FILE_DIR, filename), 'wb') as f:
+                f.write(value)
+        else:
+            print ('failed to get %s' % filename)
+            exit(1)
+
+if __name__ == '__main__':
+    get_conf()

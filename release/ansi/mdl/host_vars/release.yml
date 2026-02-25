@@ -1,0 +1,8 @@
+user: root
+remote_python: /usr/bin/python3.8
+consul_space: http://consul.wmcloud-qa.com/v1/kv/container/devops/devops-nextcmdb-CI/latest/
+consul_token: 9e29026f-a58c-3e00-8b92-062ac41d4f23
+install_dir: /datayes/test/bin
+backups_dir: /datayes/test/backup
+service_name: mdl-test
+consul_files: feeder_handler.cfg

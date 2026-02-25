@@ -1,0 +1,30 @@
+- debug: msg="deploying feeder_handler config"
+
+- name: check python
+  include: tasks/check_python.yml
+  become: true
+
+- name: check version
+  include: tasks/check_version.yml
+  tags:
+    - version
+- debug: msg="已安装版本:{{ existing_version }}"
+
+- name: stop
+  when: existing_version != "null"
+  include: tasks/stop.yml
+  become: true
+
+- name: backup
+  when: existing_version != "null"
+  include: tasks/backup.yml
+  become: true
+
+- name: config
+  include: config.yml
+  become: true
+
+- name: start
+  when: start_after_deploy | default(True)
+  include: tasks/start.yml
+  become: true

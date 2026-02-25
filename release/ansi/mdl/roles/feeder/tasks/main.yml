@@ -1,0 +1,44 @@
+- debug: msg="deploying feeder_handler {{ version }}"
+
+- name: check python
+  include: tasks/check_python.yml
+  become: true
+
+- name: check version
+  include: tasks/check_version.yml
+  tags:
+    - version
+- debug: msg="已安装版本:{{ existing_version }}"
+  tags:
+    - version
+- debug: msg="将安装版本:{{ version }}"
+
+- name: download package
+  include: tasks/download.yml
+
+- name: stop
+  when: existing_version != "null"
+  include: tasks/stop.yml
+  become: true
+
+- name: backup
+  when: existing_version != "null"
+  include: tasks/backup.yml
+  become: true
+
+- name: deploy
+  include: tasks/deploy.yml
+  become: true
+
+- name: update version file
+  template: src=templates/version.j2 dest={{ install_dir }}/version owner={{ user }} group={{ user }}
+  become: true
+
+- name: config
+  include: config.yml
+  become: true
+
+- name: start
+  when: start_after_deploy | default(True)
+  include: tasks/start.yml
+  become: true

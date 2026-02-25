@@ -1,0 +1,15 @@
+- name: package stat
+  local_action: stat path=/datayes/mdl/packages/{{ package_name }}
+  register: package_stat
+
+- name: donwload package
+  when: not package_stat.stat.exists
+  local_action: get_url url={{ package_url }} dest=/datayes/mdl/packages/{{ package_name }}
+
+# - name: package stat
+#   stat: path=/tmp/{{ package_name }}
+#   register: package_stat
+
+# - name: donwload package
+#   when: not package_stat.stat.exists
+#   get_url: url={{ package_url }} dest=/tmp/{{ package_name }}

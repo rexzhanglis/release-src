@@ -1,0 +1,6 @@
+- name: check existing version
+  shell: "[ -f {{ install_dir }}/version ] && cat {{ install_dir }}/version || echo null"
+  register: existing_version_check
+  
+- name: set existing version 
+  set_fact: existing_version={{ existing_version_check.stdout }}

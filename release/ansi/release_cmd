@@ -1,0 +1,1 @@
+ansible-playbook deploy_feeder.yml -i hosts -l mdl_test --extra-vars 'version=2.13.170-598' -vvv

@@ -1,0 +1,2 @@
+- name: check python & requests
+  shell: "{{ remote_python | default('/usr/bin/python') }} -c 'import requests'"

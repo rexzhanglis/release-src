@@ -1,0 +1,7 @@
+- name: start service (systemd)
+  when: ansible_service_mgr == 'systemd'
+  systemd: name={{ service_name }} state=started
+
+- name: start service (upstart)
+  when: ansible_service_mgr == 'upstart'
+  service: name={{ service_name }} state=started

@@ -19,6 +19,9 @@
         <el-button type="danger" :disabled="!hasCheckedInstances" @click="showDeploy = true">
           <i class="el-icon-video-play"></i> 部署
         </el-button>
+        <el-button @click="showAuditLog = true">
+          <i class="el-icon-notebook-2"></i> 操作日志
+        </el-button>
       </div>
     </div>
 
@@ -101,6 +104,9 @@
       :instance-ids="checkedInstanceIds"
       @success="refreshTree"
     />
+
+    <!-- 审计日志弹窗 -->
+    <audit-log-modal v-model="showAuditLog" />
   </div>
 </template>
 
@@ -109,13 +115,15 @@ import { getConfigTree, getConfigDetail, updateConfig, syncFromGitlab, gitCommit
 import ConfigEditor from './components/ConfigEditor'
 import BatchEditModal from './components/BatchEditModal'
 import DeployModal from './components/DeployModal'
+import AuditLogModal from './components/AuditLogModal'
 
 export default {
   name: 'MdlConfigManagement',
   components: {
     ConfigEditor,
     BatchEditModal,
-    DeployModal
+    DeployModal,
+    AuditLogModal
   },
   data() {
     return {
@@ -137,7 +145,8 @@ export default {
 
       // 弹窗控制
       showBatchEdit: false,
-      showDeploy: false
+      showDeploy: false,
+      showAuditLog: false
     }
   },
   computed: {

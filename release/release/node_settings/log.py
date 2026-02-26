@@ -4,10 +4,9 @@ from release.settings import PROD_ENV
 
 if PROD_ENV:
     LOG_ROOT = "/var/log/release"
-    if not os.path.exists(LOG_ROOT):
-        os.mkdir(LOG_ROOT)
 else:
-    LOG_ROOT = "D:\\devops\\release\\log"
+    LOG_ROOT = "C:\\devops\\release\\log"
+os.makedirs(LOG_ROOT, exist_ok=True)
 # LOG_ROOT = "C:\\Users\\zxzeng\\Desktop\\project\\release\\log"
 LOGGING = {
     'version': 1,

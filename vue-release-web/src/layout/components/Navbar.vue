@@ -19,7 +19,7 @@
           </a>
         </el-dropdown-menu>
       </el-dropdown>
-      <el-tooltip style="float:right;display: flex;margin-right: 20px;" effect="dark" content="如有问题或建议，请联系zhixiong.zeng" placement="left-end">
+      <el-tooltip style="float:right;display: flex;margin-right: 20px;" effect="dark" content="如有问题或建议，请联系yinyin.zhang" placement="left-end">
         <i class="el-icon-chat-line-round" style="font-size: small">技术支持</i>
       </el-tooltip>
     </div>

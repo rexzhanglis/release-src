@@ -33,9 +33,33 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from django.conf import settings
+from django.db import models
 
-from mdl.models import ServiceType, ConfigInstance, ConfigFile, ConfigDeployTask, MdlServer
+from mdl.models import ServiceType, ConfigInstance, ConfigFile, ConfigDeployTask, ConfigAuditLog, MdlServer
 from common.utils.apiutil import ApiResponse
+
+
+# ===================================================================
+# 审计日志辅助函数
+# ===================================================================
+
+def _audit(request, action, status='success', instance_names=None, filename='',
+           summary='', detail=None, deploy_task=None):
+    """写入审计日志，失败不影响主流程"""
+    try:
+        operator = str(request.user) if request.user and request.user.is_authenticated else 'anonymous'
+        ConfigAuditLog.objects.create(
+            action=action,
+            operator=operator,
+            status=status,
+            instance_names=', '.join(instance_names) if instance_names else '',
+            filename=filename or '',
+            summary=summary or '',
+            detail=json.dumps(detail, ensure_ascii=False) if detail is not None else '',
+            deploy_task=deploy_task,
+        )
+    except Exception:
+        pass
 
 
 # ===================================================================
@@ -542,6 +566,21 @@ def _run_deploy_task(deploy_task_id):
     deploy_task.finished_at = datetime.now()
     deploy_task.save()
 
+    # 写审计日志（部署结束后，operator 来自任务记录）
+    try:
+        inst_names = [inst.name for inst in instances]
+        ConfigAuditLog.objects.create(
+            action='deploy',
+            operator=deploy_task.operator,
+            status='success' if all_success else 'failed',
+            instance_names=', '.join(inst_names),
+            summary=f'Ansible 部署 {len(instances)} 个实例，{"全部成功" if all_success else "部分/全部失败"}',
+            detail=json.dumps({'instance_names': inst_names}, ensure_ascii=False),
+            deploy_task=deploy_task,
+        )
+    except Exception:
+        pass
+
 
 # ===================================================================
 # Serializers
@@ -652,6 +691,10 @@ class ConfigFileViewSet(viewsets.ModelViewSet):
         if content is not None:
             instance.content = content
             instance.save(update_fields=['content'])
+        _audit(request, 'save',
+               instance_names=[instance.instance.name],
+               filename=instance.filename,
+               summary=f'保存配置文件 {instance.instance.service_type.name}/{instance.instance.name}/{instance.filename}')
         return ApiResponse(data=ConfigFileSerializer(instance).data)
 
     @action(detail=False, methods=['get'], url_path='schema')
@@ -713,6 +756,16 @@ class ConfigFileViewSet(viewsets.ModelViewSet):
             except ConfigFile.DoesNotExist:
                 continue
 
+        updated_names = [
+            ConfigInstance.objects.get(id=u['instance_id']).name
+            for u in updated
+        ] if updated else []
+        _audit(request, 'batch_update',
+               instance_names=updated_names,
+               filename=filename,
+               summary=f'批量修改 {len(updates)} 项，影响 {len(updated)} 个实例',
+               detail={'updates': {k: ('__DELETE__' if v == '__DELETE__' else v)
+                                   for k, v in updates.items()}})
         return ApiResponse(data={'updated_count': len(updated), 'updated': updated})
 
     @action(detail=False, methods=['post'], url_path='git_commit')
@@ -736,6 +789,12 @@ class ConfigFileViewSet(viewsets.ModelViewSet):
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         success_count = sum(1 for r in results if r['status'] == 'ok')
+        audit_status = 'success' if success_count == len(results) else ('failed' if success_count == 0 else 'partial')
+        _audit(request, 'git_commit',
+               instance_names=[c.instance.name for c in configs],
+               summary=f'提交到 GitLab: {message}，{success_count}/{len(results)} 成功',
+               detail={'message': message, 'results': results},
+               status=audit_status)
         return ApiResponse(data={
             'message': f'已提交 {success_count}/{len(results)} 个文件到 GitLab',
             'results': results,
@@ -823,6 +882,14 @@ class ConfigFileViewSet(viewsets.ModelViewSet):
             results.append(entry)
 
         changed_count = sum(1 for r in results if r.get('changed'))
+        if not preview:
+            _audit(request, 'text_replace',
+                   instance_names=[r['instance_name'] for r in results if r.get('changed')],
+                   filename=filename,
+                   summary=f'文本替换: 查找 "{search_text}" → "{replace_text}"，修改 {changed_count} 个实例',
+                   detail={'search_text': search_text, 'replace_text': replace_text,
+                           'changed_count': changed_count, 'results': results},
+                   status='success' if changed_count > 0 else 'failed')
         return ApiResponse(data={
             'preview': preview,
             'changed_count': changed_count,
@@ -849,6 +916,12 @@ class ConfigFileViewSet(viewsets.ModelViewSet):
                 results.append({'key': config.filename, 'status': 'error', 'detail': str(e)})
 
         success_count = sum(1 for r in results if r['status'] == 'ok')
+        audit_status = 'success' if success_count == len(results) else ('failed' if success_count == 0 else 'partial')
+        _audit(request, 'push_consul',
+               instance_names=list({c.instance.name for c in configs}),
+               summary=f'推送 Consul: {success_count}/{len(results)} 成功',
+               detail={'results': results},
+               status=audit_status)
         return ApiResponse(data={
             'message': f'已推送 {success_count}/{len(results)} 个配置到 Consul',
             'results': results,
@@ -861,13 +934,13 @@ class ConfigSyncViewSet(viewsets.ViewSet):
     def create(self, request):
         try:
             results = _sync_from_gitlab()
-            return ApiResponse(data={
-                'message': (f"同步完成: {results['service_types']} 服务类型, "
-                            f"{results['instances']} 实例, {results['configs']} 配置文件"),
-                'results': results,
-            })
+            msg = (f"同步完成: {results['service_types']} 服务类型, "
+                   f"{results['instances']} 实例, {results['configs']} 配置文件")
+            _audit(request, 'sync', summary=msg, detail=results)
+            return ApiResponse(data={'message': msg, 'results': results})
         except Exception as e:
             import traceback
+            _audit(request, 'sync', status='failed', summary=str(e))
             return Response({'code': 500, 'message': str(e), 'data': {'traceback': traceback.format_exc()}},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -878,6 +951,50 @@ class ConfigDeployViewSet(viewsets.ViewSet):
     def list(self, request):
         tasks = ConfigDeployTask.objects.order_by('-created_time')[:20]
         return ApiResponse(data=ConfigDeployTaskSerializer(tasks, many=True).data)
+
+    @action(detail=False, methods=['post'], url_path='preview')
+    def preview(self, request):
+        """返回即将部署的实例详情（配置文件、目标路径、主机等），供弹窗展示"""
+        instance_ids = request.data.get('instance_ids', [])
+        if not instance_ids:
+            return Response({'code': 400, 'message': '未指定实例', 'data': None},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        consul_url = getattr(settings, 'CONFIG_CONSUL_URL', '').rstrip('/')
+        kv_prefix = getattr(settings, 'CONFIG_CONSUL_KV_PREFIX', 'configs/mdl')
+
+        instances = (ConfigInstance.objects
+                     .select_related('service_type')
+                     .prefetch_related('configfile_set')
+                     .filter(id__in=instance_ids))
+
+        result = []
+        for inst in instances:
+            # consul_space 展示：优先用实例字段，否则构造默认
+            consul_space = inst.consul_space or '{}/v1/kv/{}/{}/{}/'.format(
+                consul_url, kv_prefix, inst.service_type.name, inst.name)
+
+            configs = [
+                {
+                    'filename': cfg.filename,
+                    'consul_key': consul_space.rstrip('/') + '/' + cfg.filename,
+                    'size': len(json.dumps(cfg.content)) if cfg.content else 0,
+                }
+                for cfg in inst.configfile_set.all().order_by('filename')
+            ]
+
+            result.append({
+                'instance_id': inst.id,
+                'instance_name': inst.name,
+                'service_type': inst.service_type.name,
+                'host_ip': inst.host_ip or '(未配置)',
+                'install_dir': inst.install_dir or '(未配置)',
+                'service_name': inst.service_name or '(未配置)',
+                'consul_space': consul_space,
+                'configs': configs,
+            })
+
+        return ApiResponse(data=result)
 
     def create(self, request):
         instance_ids = request.data.get('instance_ids', [])
@@ -914,6 +1031,60 @@ class ConfigDeployViewSet(viewsets.ViewSet):
         except ConfigDeployTask.DoesNotExist:
             return Response({'code': 404, 'message': '任务不存在', 'data': None},
                             status=status.HTTP_404_NOT_FOUND)
+
+
+class ConfigAuditLogSerializer(serializers.ModelSerializer):
+    action_display = serializers.CharField(source='get_action_display', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+
+    class Meta:
+        model = ConfigAuditLog
+        fields = ['id', 'action', 'action_display', 'operator', 'status', 'status_display',
+                  'instance_names', 'filename', 'summary', 'detail',
+                  'deploy_task_id', 'created_time']
+
+
+class ConfigAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+    """审计日志（只读）"""
+    queryset = ConfigAuditLog.objects.all()
+    serializer_class = ConfigAuditLogSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        action = self.request.query_params.get('action')
+        operator = self.request.query_params.get('operator')
+        date_from = self.request.query_params.get('date_from')
+        date_to = self.request.query_params.get('date_to')
+        keyword = self.request.query_params.get('keyword')
+        if action:
+            qs = qs.filter(action=action)
+        if operator:
+            qs = qs.filter(operator__icontains=operator)
+        if date_from:
+            qs = qs.filter(created_time__date__gte=date_from)
+        if date_to:
+            qs = qs.filter(created_time__date__lte=date_to)
+        if keyword:
+            qs = qs.filter(
+                models.Q(instance_names__icontains=keyword) |
+                models.Q(summary__icontains=keyword) |
+                models.Q(filename__icontains=keyword)
+            )
+        return qs
+
+    def list(self, request):
+        qs = self.get_queryset()
+        # 分页：默认每页 50 条
+        page = int(request.query_params.get('page', 1))
+        page_size = int(request.query_params.get('page_size', 50))
+        total = qs.count()
+        items = qs[(page - 1) * page_size: page * page_size]
+        return ApiResponse(data={
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+            'items': ConfigAuditLogSerializer(items, many=True).data,
+        })
 
 
 class ConfigInstanceViewSet(viewsets.ModelViewSet):

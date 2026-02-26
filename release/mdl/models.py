@@ -127,3 +127,48 @@ class ConfigDeployTask(TimestampedModel):
     class Meta:
         verbose_name = "配置部署任务"
         verbose_name_plural = "配置部署任务"
+
+
+class ConfigAuditLog(TimestampedModel):
+    """MDL 配置操作审计日志
+    记录所有对配置文件的写操作：编辑保存、批量修改、文本替换、提交Git、推送Consul、Ansible部署
+    """
+    ACTION_CHOICES = [
+        ('save',          '保存配置'),
+        ('batch_update',  '批量修改'),
+        ('text_replace',  '文本替换'),
+        ('git_commit',    '提交 Git'),
+        ('push_consul',   '推送 Consul'),
+        ('deploy',        'Ansible 部署'),
+        ('sync',          '同步 GitLab'),
+    ]
+    STATUS_CHOICES = [
+        ('success', '成功'),
+        ('failed',  '失败'),
+        ('partial', '部分成功'),
+    ]
+
+    action      = models.CharField("操作类型", max_length=30, choices=ACTION_CHOICES)
+    operator    = models.CharField("操作人",   max_length=100)
+    status      = models.CharField("结果",     max_length=20, choices=STATUS_CHOICES, default='success')
+    # 关联实例（可多个，用逗号分隔存名称，查询方便）
+    instance_names = models.TextField("实例列表", blank=True, default='')
+    # 关联文件名
+    filename    = models.CharField("配置文件", max_length=200, blank=True, default='')
+    # 操作概要（如：修改了哪些 key、替换了什么文本、git commit message 等）
+    summary     = models.TextField("操作摘要", blank=True, default='')
+    # 详细内容（JSON 字符串，存 diff/结果等）
+    detail      = models.TextField("详情(JSON)", blank=True, default='')
+    # 关联部署任务（仅 deploy 操作）
+    deploy_task = models.ForeignKey(
+        ConfigDeployTask, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='audit_logs'
+    )
+
+    def __str__(self):
+        return f"[{self.action}] {self.operator} @ {self.created_time:%Y-%m-%d %H:%M}"
+
+    class Meta:
+        verbose_name = "配置审计日志"
+        verbose_name_plural = "配置审计日志"
+        ordering = ['-created_time']

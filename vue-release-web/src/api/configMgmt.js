@@ -101,6 +101,18 @@ export function pushConsul(data) {
 }
 
 /**
+ * 获取部署预览（实例详情：配置文件、目标路径、主机等）
+ * @param {Object} data - { instance_ids: [...] }
+ */
+export function getDeployPreview(data) {
+  return request({
+    url: '/config-mgmt/deploy/preview/',
+    method: 'post',
+    data
+  })
+}
+
+/**
  * 创建部署任务
  * @param {Object} data - { instance_ids: [...] }
  */
@@ -150,6 +162,18 @@ export function textReplace(data) {
 export function getConfigInstances(params) {
   return request({
     url: '/config-mgmt/instances/',
+    method: 'get',
+    params
+  })
+}
+
+/**
+ * 获取审计日志列表
+ * @param {Object} params - { action, operator, date_from, date_to, keyword, page, page_size }
+ */
+export function getAuditLogs(params) {
+  return request({
+    url: '/config-mgmt/audit-logs/',
     method: 'get',
     params
   })

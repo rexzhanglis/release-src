@@ -13,17 +13,17 @@ COPY package*.json ./
 # 安装依赖
 RUN npm install
 
+# 复制源代码（.dockerignore 已排除 node_modules，不会覆盖 npm install 的结果）
+COPY . .
+
 # 确保 node_modules/.bin 下的可执行文件有执行权限
 RUN chmod +x node_modules/.bin/*
-
-# 复制源代码
-COPY . .
 
 # 设置 OpenSSL Legacy Provider 以兼容 Node 18
 ENV NODE_OPTIONS=--openssl-legacy-provider
 
-# 构建生产环境代码
-RUN npm run build
+# 构建生产环境代码（直接用 node 调用，避免 .bin/ 软链接权限问题）
+RUN node node_modules/@vue/cli-service/bin/vue-cli-service.js build
 
 # 阶段二：部署到 Nginx
 #FROM nginx:1.20.0

@@ -106,7 +106,7 @@ export function pushConsul(data) {
  */
 export function createDeployTask(data) {
   return request({
-    url: '/api/config-mgmt/deploy/',
+    url: '/config-mgmt/deploy/',
     method: 'post',
     data
   })
@@ -117,7 +117,7 @@ export function createDeployTask(data) {
  */
 export function getDeployTasks() {
   return request({
-    url: '/api/config-mgmt/deploy/',
+    url: '/config-mgmt/deploy/',
     method: 'get'
   })
 }
@@ -127,7 +127,7 @@ export function getDeployTasks() {
  */
 export function getDeployTaskDetail(id) {
   return request({
-    url: `/api/config-mgmt/deploy/${id}/`,
+    url: `/config-mgmt/deploy/${id}/`,
     method: 'get'
   })
 }
@@ -137,7 +137,7 @@ export function getDeployTaskDetail(id) {
  */
 export function getConfigInstances(params) {
   return request({
-    url: '/api/config-mgmt/instances/',
+    url: '/config-mgmt/instances/',
     method: 'get',
     params
   })
@@ -148,7 +148,7 @@ export function getConfigInstances(params) {
  */
 export function getServiceTypes() {
   return request({
-    url: '/api/config-mgmt/service-types/',
+    url: '/config-mgmt/service-types/',
     method: 'get'
   })
 }

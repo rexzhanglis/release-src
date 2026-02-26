@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  # 后端服务
+  release-backend:
+    build:
+      context: ./release
+      dockerfile: docker/Dockerfile
+    image: release-backend:v1.0.0
+    container_name: release-backend
+    restart: always
+    environment:
+      - DB_NAME=release_qa
+      - DB_USER=alertcenter
+      - DB_PASSWORD=Huawei@123
+      - DB_HOST=10.24.51.155  # 替换为您的真实数据库 IP
+      - DB_PORT=31431
+      # GitLab 配置
+      - CONFIG_GITLAB_URL=http://git.datayes.com
+      - CONFIG_GITLAB_TOKEN=aHo8e9gFFQGGqjeAE9x7
+      - CONFIG_GITLAB_PROJECT_ID=6481
+      - CONFIG_GITLAB_BRANCH=master
+      # Consul 配置
+      - CONFIG_CONSUL_URL=http://consul.wmcloud.com
+      - CONFIG_CONSUL_TOKEN=dbb8cd09-96db-36f8-fcba-a3f84e496241
+      - CONFIG_CONSUL_KV_PREFIX=configs/mdl
+      # Ansible 配置
+      - ANSIBLE_SSH_USER=zhixiong.zeng
+      - ANSIBLE_SSH_PASS=datayes@123
+    volumes:
+      - ./release:/datayes/release
+    ports:
+      - "8000:8000"
+    # depends_on:
+    #   - release-db
+    command: python manage.py runserver 0.0.0.0:8000
+
+  # 前端服务
+  release-web:
+    build:
+      context: ./vue-release-web
+      dockerfile: docker/Dockerfile
+    image: release-web:v1.0.0
+    container_name: release-web
+    restart: always
+    ports:
+      - "9528:80"
+    volumes:
+      - ./vue-release-web/dist:/usr/share/nginx/html
+    depends_on:
+      - release-backend
+
+  # 数据库 (如果连接外部数据库，请注释掉此段)
+  # release-db:
+  #   image: mysql:5.7
+  #   container_name: release-db
+  #   restart: always
+  #   environment:
+  #     - MYSQL_ROOT_PASSWORD=root
+  #     - MYSQL_DATABASE=release_qa
+  #   ports:
+  #     - "3306:3306"
+  #   volumes:
+  #     - db_data:/var/lib/mysql
+
+  # 模拟目标主机 (用于 Ansible 部署测试)
+  target-host:
+    image: paramiko/sshd:latest  # 一个带有 SSH 服务的镜像，或者使用 ubuntu + ssh server
+    container_name: target-host
+    restart: always
+    environment:
+      - SSH_USERS=root:root:1000  # 用户名:密码:UID
+    ports:
+      - "2222:22"
+
+volumes:
+  db_data:

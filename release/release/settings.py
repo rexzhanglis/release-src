@@ -211,7 +211,9 @@ import os
 import pydotplus
 
 # 设置 Graphviz 可执行文件的路径
-os.environ["PATH"] += os.pathsep + 'C:/Program Files/Graphviz/bin/'
+# 仅在 Windows 下设置，Linux 环境通常已在 PATH 中
+if os.name == 'nt':
+    os.environ["PATH"] += os.pathsep + 'C:/Program Files/Graphviz/bin/'
 
 # =====================================================
 # MDL 配置管理模块配置（config_mgmt_viewset.py 使用）
@@ -219,23 +221,23 @@ os.environ["PATH"] += os.pathsep + 'C:/Program Files/Graphviz/bin/'
 # =====================================================
 
 # GitLab 配置（用于配置文件同步和提交）
-CONFIG_GITLAB_URL = 'http://git.datayes.com'
-CONFIG_GITLAB_TOKEN = 'aHo8e9gFFQGGqjeAE9x7'   # 与 gitlab_client.py 保持一致
-CONFIG_GITLAB_PROJECT_ID = '6481'               # MDL 配置仓库 project ID
-CONFIG_GITLAB_BRANCH = 'master'
-CONFIG_GITLAB_ROOT_PATH = ''                    # 如仓库根即为配置根则留空
+CONFIG_GITLAB_URL = os.environ.get('CONFIG_GITLAB_URL', 'http://git.datayes.com')
+CONFIG_GITLAB_TOKEN = os.environ.get('CONFIG_GITLAB_TOKEN', 'aHo8e9gFFQGGqjeAE9x7')   # 与 gitlab_client.py 保持一致
+CONFIG_GITLAB_PROJECT_ID = os.environ.get('CONFIG_GITLAB_PROJECT_ID', '6481')               # MDL 配置仓库 project ID
+CONFIG_GITLAB_BRANCH = os.environ.get('CONFIG_GITLAB_BRANCH', 'master')
+CONFIG_GITLAB_ROOT_PATH = os.environ.get('CONFIG_GITLAB_ROOT_PATH', '')                    # 如仓库根即为配置根则留空
 
 # Consul 配置（用于推送 KV）
-CONFIG_CONSUL_URL = 'http://consul.wmcloud.com'
-CONFIG_CONSUL_TOKEN = 'dbb8cd09-96db-36f8-fcba-a3f84e496241'  # 与 consul_client.py 保持一致
-CONFIG_CONSUL_KV_PREFIX = 'configs/mdl'
+CONFIG_CONSUL_URL = os.environ.get('CONFIG_CONSUL_URL', 'http://consul.wmcloud.com')
+CONFIG_CONSUL_TOKEN = os.environ.get('CONFIG_CONSUL_TOKEN', 'dbb8cd09-96db-36f8-fcba-a3f84e496241')  # 与 consul_client.py 保持一致
+CONFIG_CONSUL_KV_PREFIX = os.environ.get('CONFIG_CONSUL_KV_PREFIX', 'configs/mdl')
 
 # Ansible 部署目录（指向 release/ansi/mdl/）
 CONFIG_ANSIBLE_DIR = os.path.join(BASE_DIR, 'ansi', 'mdl')
 
 # Ansible SSH 认证
-ANSIBLE_SSH_USER = 'root'
-ANSIBLE_SSH_PASS = ''
+ANSIBLE_SSH_USER = os.environ.get('ANSIBLE_SSH_USER', 'root')
+ANSIBLE_SSH_PASS = os.environ.get('ANSIBLE_SSH_PASS', '')
 
 # 部署默认值（实例未设置时使用）
 DEPLOY_DEFAULT_INSTALL_DIR = '/datayes/app/bin'
@@ -245,16 +247,17 @@ DEPLOY_DEFAULT_BACKUPS_DIR = '/datayes/app/backups'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': "release_qa",
-        'USER': "alertcenter",
-        'PASSWORD': "Huawei@123",
-        'HOST': "10.24.51.155",
-        'PORT': "31431",
+        'NAME': os.environ.get("DB_NAME", "release_qa"),
+        'USER': os.environ.get("DB_USER", "alertcenter"),
+        'PASSWORD': os.environ.get("DB_PASSWORD", "Huawei@123"),
+        'HOST': os.environ.get("DB_HOST", "10.24.51.155"),
+        'PORT': os.environ.get("DB_PORT", "31431"),
         'OPTIONS': {
             "init_command": "SET foreign_key_checks = 0;",
         }
     }
 }
+
 """
 每隔5分钟   */5 * * * *
 每天3点钟执行  0 3 * * *

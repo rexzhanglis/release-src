@@ -1,1 +1,1 @@
-release ansible_ssh_host=127.0.0.1 ansible_ssh_user=test ansible_ssh_pass=test
+release ansible_ssh_host=10.24.71.51 ansible_ssh_user=root ansible_ssh_pass=

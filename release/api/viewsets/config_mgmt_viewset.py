@@ -419,13 +419,36 @@ def _run_deploy_task(deploy_task_id):
             playbook_path = os.path.join(ansible_dir, 'deploy_config.yml')
 
             import subprocess
-            env = os.environ.copy()
-            env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
-            result = subprocess.run(
-                ['ansible-playbook', playbook_path, '-i', hosts_path, '-vv'],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, env=env,
-            )
+            import platform
+
+            # 如果是在 Docker 容器中（通常是 Linux），或者是 Linux 宿主机，且不是 Mock 模式
+            is_windows = platform.system() == 'Windows'
+            # 可以通过环境变量强制开启 Mock，方便调试
+            force_mock = os.environ.get('ANSIBLE_FORCE_MOCK', 'False').lower() == 'true'
+
+            if is_windows or force_mock:
+                logs.append(f'  [MOCK] Windows/Mock环境跳过Ansible执行')
+                logs.append(f'  Command: ansible-playbook {playbook_path} -i {hosts_path}')
+                class MockResult:
+                    returncode = 0
+                    stdout = "Mock execution success on Windows/Dev"
+                result = MockResult()
+            else:
+                # 真实执行
+                env = os.environ.copy()
+                env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
+                
+                # 确保 ansible 命令可用
+                try:
+                    result = subprocess.run(
+                        ['ansible-playbook', playbook_path, '-i', hosts_path, '-vv'],
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        text=True, env=env,
+                    )
+                except FileNotFoundError:
+                     logs.append(f'  [ERROR] ansible-playbook 命令未找到，请确保已安装 Ansible')
+                     all_success = False
+                     continue
             if result.returncode == 0:
                 logs.append(f'  Ansible OK')
             else:

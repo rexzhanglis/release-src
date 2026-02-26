@@ -11,7 +11,31 @@ import os, django
 try:
     import ansible_runner
 except ImportError:
-    ansible_runner = None
+    # 尝试在Linux环境下Mock，或者仅当真正需要时报错
+    # 为了兼容Windows开发环境，这里提供Mock
+    class AnsibleRunnerMock:
+        @staticmethod
+        def run_command(executable_cmd, cmdline_args, **kwargs):
+            # 简单判断环境，如果是Windows则Mock，否则尝试调用系统命令（如果未安装库）
+            import platform
+            import subprocess
+            if platform.system() == 'Windows':
+                 print(f"[MOCK] Executing: {executable_cmd} {' '.join(cmdline_args)}")
+                 return "Mock Ansible Success\nSkipping actual execution on Windows.", "", 0
+            
+            # 在 Linux 上如果没有安装 ansible_runner 库，尝试直接调用 subprocess
+            # 但为了保持原逻辑兼容性，这里我们假设 Docker 环境里应该安装 ansible_runner
+            # 如果没安装，这里回退到 subprocess 调用作为一种 fallback 或者是报错
+            print(f"[WARNING] ansible_runner module not found, trying subprocess for {executable_cmd}")
+            try:
+                env = kwargs.get('env', os.environ.copy())
+                # 简单模拟 ansible_runner 的返回结构
+                res = subprocess.run([executable_cmd] + cmdline_args, capture_output=True, text=True, env=env)
+                return res.stdout, res.stderr, res.returncode
+            except Exception as e:
+                return "", str(e), 1
+
+    ansible_runner = AnsibleRunnerMock()
 
 from external.consul_client import ConsulClient
 from external.gitlab_client import GitlabClient

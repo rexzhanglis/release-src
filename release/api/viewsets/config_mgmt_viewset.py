@@ -361,133 +361,165 @@ def _get_ansible_dir():
                    os.path.join(settings.BASE_DIR, 'ansi', 'mdl'))
 
 
+def _deploy_single_instance(instance, ansible_dir):
+    """部署单个实例，返回 (logs, success)，使用独立临时目录避免并发冲突"""
+    import yaml
+    import subprocess
+    import platform
+    import tempfile
+    import shutil
+    from mdl.models import ConfigFile
+
+    logs = []
+    success = True
+
+    service_name = instance.service_name or f'mdl-{instance.service_type.name}'
+    install_dir = instance.install_dir or getattr(settings, 'DEPLOY_DEFAULT_INSTALL_DIR', '/datayes/app/bin')
+    backups_dir = instance.backups_dir or getattr(settings, 'DEPLOY_DEFAULT_BACKUPS_DIR', '/datayes/app/backups')
+    ssh_user = getattr(settings, 'ANSIBLE_SSH_USER', 'root')
+    ssh_pass = getattr(settings, 'ANSIBLE_SSH_PASS', '')
+
+    logs.append(f'[{datetime.now():%H:%M:%S}] === 部署 {instance.service_type.name}/{instance.name} ===')
+
+    configs = ConfigFile.objects.filter(instance=instance)
+    if not configs.exists():
+        logs.append(f'  [SKIP] 无配置文件')
+        return logs, True
+
+    # Step 1: 推送 Consul
+    logs.append(f'  [STEP 1] 推送 Consul...')
+    for config in configs:
+        try:
+            key_path, ok = _push_config_to_consul(config)
+            logs.append(f'    {"OK" if ok else "FAIL"}: {key_path}')
+            if not ok:
+                success = False
+        except Exception as e:
+            logs.append(f'    ERROR: {config.filename} - {e}')
+            success = False
+
+    # Step 2: Ansible
+    if not instance.host_ip:
+        logs.append(f'  [SKIP] Ansible: 无主机 IP')
+        return logs, success
+
+    logs.append(f'  [STEP 2] Ansible → {instance.host_ip}...')
+
+    # 每个实例使用独立临时目录，避免并发时互相覆盖
+    tmp_dir = tempfile.mkdtemp(prefix=f'ansible_{instance.id}_')
+    try:
+        # 复制 playbook 和 roles 到临时目录
+        for item in os.listdir(ansible_dir):
+            src = os.path.join(ansible_dir, item)
+            dst = os.path.join(tmp_dir, item)
+            if os.path.isdir(src):
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+
+        # 生成 hosts 文件
+        hosts_path = os.path.join(tmp_dir, 'hosts')
+        with open(hosts_path, 'w') as fp:
+            fp.write(f'release ansible_ssh_host={instance.host_ip} '
+                     f'ansible_ssh_user={ssh_user} ansible_ssh_pass={ssh_pass}\n')
+
+        # 生成 host_vars/release.yml
+        host_vars_dir = os.path.join(tmp_dir, 'host_vars')
+        os.makedirs(host_vars_dir, exist_ok=True)
+        host_vars = {
+            'user': ssh_user,
+            'remote_python': instance.remote_python or '/usr/bin/python3',
+            'consul_space': instance.consul_space or '{}/v1/kv/{}/{}/{}/'.format(
+                getattr(settings, 'CONFIG_CONSUL_URL', '').rstrip('/'),
+                getattr(settings, 'CONFIG_CONSUL_KV_PREFIX', 'configs/mdl'),
+                instance.service_type.name,
+                instance.name,
+            ),
+            'consul_token': getattr(settings, 'CONFIG_CONSUL_TOKEN',
+                                    getattr(settings, 'CONSUL_TOKEN', '')),
+            'install_dir': install_dir,
+            'backups_dir': backups_dir,
+            'service_name': service_name,
+            'consul_files': instance.consul_files or 'feeder_handler.cfg',
+        }
+        with open(os.path.join(host_vars_dir, 'release.yml'), 'w') as fp:
+            yaml.dump(host_vars, fp, default_flow_style=False)
+
+        playbook_path = os.path.join(tmp_dir, 'deploy_config.yml')
+        is_windows = platform.system() == 'Windows'
+        force_mock = os.environ.get('ANSIBLE_FORCE_MOCK', 'False').lower() == 'true'
+
+        if is_windows or force_mock:
+            logs.append(f'  [MOCK] Windows/Mock环境跳过Ansible执行')
+            result_rc, result_stdout = 0, 'Mock execution success'
+        else:
+            env = os.environ.copy()
+            env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
+            try:
+                proc = subprocess.run(
+                    ['ansible-playbook', playbook_path, '-i', hosts_path, '-vv'],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, env=env,
+                )
+                result_rc, result_stdout = proc.returncode, proc.stdout
+            except FileNotFoundError:
+                logs.append(f'  [ERROR] ansible-playbook 命令未找到')
+                return logs, False
+
+        if result_rc == 0:
+            logs.append(f'  Ansible OK')
+        else:
+            logs.append(f'  Ansible FAIL (rc={result_rc})')
+            for line in (result_stdout or '').strip().split('\n')[-20:]:
+                logs.append(f'    > {line}')
+            success = False
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    return logs, success
+
+
 def _run_deploy_task(deploy_task_id):
-    """后台线程执行部署"""
-    from mdl.models import ConfigDeployTask, ConfigFile
+    """后台线程执行部署，并发部署所有实例"""
+    import concurrent.futures
+    from mdl.models import ConfigDeployTask
 
     deploy_task = ConfigDeployTask.objects.get(id=deploy_task_id)
     deploy_task.status = 'running'
     deploy_task.save(update_fields=['status'])
 
-    logs = []
-    all_success = True
     ansible_dir = _get_ansible_dir()
+    instances = list(deploy_task.instances.select_related('service_type').all())
+
+    all_logs = []
+    all_success = True
 
     try:
-        instances = deploy_task.instances.select_related('service_type').all()
-
-        for instance in instances:
-            service_name = instance.service_name or f'mdl-{instance.service_type.name}'
-            install_dir = instance.install_dir or getattr(settings, 'DEPLOY_DEFAULT_INSTALL_DIR', '/datayes/app/bin')
-            backups_dir = instance.backups_dir or getattr(settings, 'DEPLOY_DEFAULT_BACKUPS_DIR', '/datayes/app/backups')
-            ssh_user = getattr(settings, 'ANSIBLE_SSH_USER', 'root')
-            ssh_pass = getattr(settings, 'ANSIBLE_SSH_PASS', '')
-
-            logs.append(f'[{datetime.now():%H:%M:%S}] === 部署 {instance.service_type.name}/{instance.name} ===')
-
-            configs = ConfigFile.objects.filter(instance=instance)
-            if not configs.exists():
-                logs.append(f'  [SKIP] 无配置文件')
-                continue
-
-            # Step 1: 推送 Consul
-            logs.append(f'  [STEP 1] 推送 Consul...')
-            for config in configs:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(instances), 10)) as executor:
+            futures = {
+                executor.submit(_deploy_single_instance, inst, ansible_dir): inst
+                for inst in instances
+            }
+            for future in concurrent.futures.as_completed(futures):
                 try:
-                    key_path, ok = _push_config_to_consul(config)
-                    logs.append(f'    {"OK" if ok else "FAIL"}: {key_path}')
-                    if not ok:
+                    inst_logs, inst_success = future.result()
+                    all_logs.extend(inst_logs)
+                    if not inst_success:
                         all_success = False
                 except Exception as e:
-                    logs.append(f'    ERROR: {config.filename} - {e}')
+                    import traceback
+                    inst = futures[future]
+                    all_logs.append(f'[ERROR] {inst.name}: {e}')
+                    all_logs.append(traceback.format_exc())
                     all_success = False
-
-            # Step 2: Ansible
-            if not instance.host_ip:
-                logs.append(f'  [SKIP] Ansible: 无主机 IP')
-                continue
-
-            logs.append(f'  [STEP 2] Ansible → {instance.host_ip}...')
-
-            # 生成 hosts 文件
-            hosts_path = os.path.join(ansible_dir, 'hosts')
-            host_line = (f'release ansible_ssh_host={instance.host_ip} '
-                         f'ansible_ssh_user={ssh_user} ansible_ssh_pass={ssh_pass}')
-            with open(hosts_path, 'w') as fp:
-                fp.write(host_line + '\n')
-
-            # 生成 host_vars/release.yml
-            host_vars_dir = os.path.join(ansible_dir, 'host_vars')
-            os.makedirs(host_vars_dir, exist_ok=True)
-            import yaml
-            host_vars = {
-                'user': ssh_user,
-                'remote_python': instance.remote_python or '/usr/bin/python3',
-                'consul_space': instance.consul_space or '{}/v1/kv/{}/{}/{}/'.format(
-                    getattr(settings, 'CONFIG_CONSUL_URL', '').rstrip('/'),
-                    getattr(settings, 'CONFIG_CONSUL_KV_PREFIX', 'configs/mdl'),
-                    instance.service_type.name,
-                    instance.name,
-                ),
-                'consul_token': getattr(settings, 'CONFIG_CONSUL_TOKEN',
-                                        getattr(settings, 'CONSUL_TOKEN', '')),
-                'install_dir': install_dir,
-                'backups_dir': backups_dir,
-                'service_name': service_name,
-                'consul_files': instance.consul_files or 'feeder_handler.cfg',
-            }
-            with open(os.path.join(host_vars_dir, 'release.yml'), 'w') as fp:
-                yaml.dump(host_vars, fp, default_flow_style=False)
-
-            playbook_path = os.path.join(ansible_dir, 'deploy_config.yml')
-
-            import subprocess
-            import platform
-
-            # 如果是在 Docker 容器中（通常是 Linux），或者是 Linux 宿主机，且不是 Mock 模式
-            is_windows = platform.system() == 'Windows'
-            # 可以通过环境变量强制开启 Mock，方便调试
-            force_mock = os.environ.get('ANSIBLE_FORCE_MOCK', 'False').lower() == 'true'
-
-            if is_windows or force_mock:
-                logs.append(f'  [MOCK] Windows/Mock环境跳过Ansible执行')
-                logs.append(f'  Command: ansible-playbook {playbook_path} -i {hosts_path}')
-                class MockResult:
-                    returncode = 0
-                    stdout = "Mock execution success on Windows/Dev"
-                result = MockResult()
-            else:
-                # 真实执行
-                env = os.environ.copy()
-                env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
-                
-                # 确保 ansible 命令可用
-                try:
-                    result = subprocess.run(
-                        ['ansible-playbook', playbook_path, '-i', hosts_path, '-vv'],
-                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                        text=True, env=env,
-                    )
-                except FileNotFoundError:
-                     logs.append(f'  [ERROR] ansible-playbook 命令未找到，请确保已安装 Ansible')
-                     all_success = False
-                     continue
-            if result.returncode == 0:
-                logs.append(f'  Ansible OK')
-            else:
-                logs.append(f'  Ansible FAIL (rc={result.returncode})')
-                for line in (result.stdout or '').strip().split('\n')[-20:]:
-                    logs.append(f'    > {line}')
-                all_success = False
-
     except Exception as e:
         import traceback
-        deploy_task.status = 'failed'
-        logs.append(f'异常: {e}')
-        logs.append(traceback.format_exc())
+        all_logs.append(f'异常: {e}')
+        all_logs.append(traceback.format_exc())
+        all_success = False
 
     deploy_task.status = 'success' if all_success else 'failed'
-    deploy_task.log = '\n'.join(logs)
+    deploy_task.log = '\n'.join(all_logs)
     deploy_task.finished_at = datetime.now()
     deploy_task.save()
 

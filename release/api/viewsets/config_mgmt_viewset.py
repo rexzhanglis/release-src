@@ -74,6 +74,25 @@ def set_nested_value(data, key_path, value):
     d[last] = value
 
 
+def _delete_nested_value(data, key_path):
+    """删除嵌套结构中的某个 key"""
+    segments = _parse_path_segments(key_path)
+    d = data
+    try:
+        for seg in segments[:-1]:
+            if isinstance(seg, int):
+                d = d[seg]
+            else:
+                d = d[seg]
+        last = segments[-1]
+        if isinstance(d, dict) and last in d:
+            del d[last]
+        elif isinstance(d, list) and isinstance(last, int) and 0 <= last < len(d):
+            d.pop(last)
+    except (KeyError, IndexError, TypeError):
+        pass
+
+
 def _get_nested_value(data, key_path):
     """根据路径获取嵌套值"""
     segments = _parse_path_segments(key_path)
@@ -684,7 +703,10 @@ class ConfigFileViewSet(viewsets.ModelViewSet):
                 config = ConfigFile.objects.get(instance_id=instance_id, filename=filename)
                 content = json.loads(json.dumps(config.content)) if config.content else {}
                 for key_path, value in updates.items():
-                    set_nested_value(content, key_path, value)
+                    if value == '__DELETE__':
+                        _delete_nested_value(content, key_path)
+                    else:
+                        set_nested_value(content, key_path, value)
                 config.content = content
                 config.save()
                 updated.append({'id': config.id, 'instance_id': instance_id})
@@ -716,6 +738,95 @@ class ConfigFileViewSet(viewsets.ModelViewSet):
         success_count = sum(1 for r in results if r['status'] == 'ok')
         return ApiResponse(data={
             'message': f'已提交 {success_count}/{len(results)} 个文件到 GitLab',
+            'results': results,
+        })
+
+    @action(detail=False, methods=['post'], url_path='text_replace')
+    def text_replace(self, request):
+        """文本查找替换：在选中实例的配置文件 JSON 文本中做字符串替换
+
+        请求体:
+          instance_ids: [...]
+          filename: 'feeder_handler.cfg'
+          search_text: '要查找的字符串'
+          replace_text: '替换为的字符串'
+          preview: true/false  (true 时只返回预览，不保存)
+        """
+        instance_ids = request.data.get('instance_ids', [])
+        filename = request.data.get('filename', '')
+        search_text = request.data.get('search_text', '')
+        replace_text = request.data.get('replace_text', '')
+        preview = request.data.get('preview', True)
+
+        if not instance_ids or not filename:
+            return Response({'code': 400, 'message': '缺少 instance_ids 或 filename', 'data': None},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if not search_text:
+            return Response({'code': 400, 'message': '查找内容不能为空', 'data': None},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        results = []
+        for instance_id in instance_ids:
+            try:
+                config = ConfigFile.objects.select_related('instance').get(
+                    instance_id=instance_id, filename=filename)
+            except ConfigFile.DoesNotExist:
+                continue
+
+            # 使用格式化后的 JSON 文本做替换（保证一致性）
+            raw_json = json.dumps(config.content, ensure_ascii=False, indent=2)
+            count = raw_json.count(search_text)
+            if count == 0:
+                results.append({
+                    'instance_id': instance_id,
+                    'instance_name': config.instance.name,
+                    'match_count': 0,
+                    'changed': False,
+                })
+                continue
+
+            new_json = raw_json.replace(search_text, replace_text)
+            # 验证替换后仍是有效 JSON
+            try:
+                new_content = json.loads(new_json)
+            except json.JSONDecodeError as e:
+                results.append({
+                    'instance_id': instance_id,
+                    'instance_name': config.instance.name,
+                    'match_count': count,
+                    'changed': False,
+                    'error': f'替换后 JSON 无效: {e}',
+                })
+                continue
+
+            entry = {
+                'instance_id': instance_id,
+                'instance_name': config.instance.name,
+                'match_count': count,
+                'changed': True,
+            }
+            if preview:
+                # 预览：返回 diff 片段（最多 5 处上下文）
+                lines_old = raw_json.splitlines()
+                lines_new = new_json.splitlines()
+                diff_lines = []
+                for i, (lo, ln) in enumerate(zip(lines_old, lines_new)):
+                    if lo != ln:
+                        diff_lines.append({'line': i + 1, 'old': lo.strip(), 'new': ln.strip()})
+                        if len(diff_lines) >= 5:
+                            break
+                entry['diff_preview'] = diff_lines
+            else:
+                config.content = new_content
+                config.save(update_fields=['content'])
+
+            results.append(entry)
+
+        changed_count = sum(1 for r in results if r.get('changed'))
+        return ApiResponse(data={
+            'preview': preview,
+            'changed_count': changed_count,
+            'total': len(results),
             'results': results,
         })
 

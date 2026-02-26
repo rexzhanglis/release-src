@@ -133,6 +133,18 @@ export function getDeployTaskDetail(id) {
 }
 
 /**
+ * 文本查找替换
+ * @param {Object} data - { instance_ids, filename, search_text, replace_text, preview }
+ */
+export function textReplace(data) {
+  return request({
+    url: '/config-mgmt/configs/text_replace/',
+    method: 'post',
+    data
+  })
+}
+
+/**
  * 获取配置实例列表
  */
 export function getConfigInstances(params) {

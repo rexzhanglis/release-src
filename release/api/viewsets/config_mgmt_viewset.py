@@ -34,7 +34,7 @@ from rest_framework.response import Response
 
 from django.conf import settings
 
-from mdl.models import ServiceType, ConfigInstance, ConfigFile, ConfigDeployTask
+from mdl.models import ServiceType, ConfigInstance, ConfigFile, ConfigDeployTask, MdlServer
 from common.utils.apiutil import ApiResponse
 
 
@@ -234,10 +234,27 @@ def _sync_from_gitlab():
                 results['service_types'] += 1
 
             host_ip, port = _parse_instance_name(inst_name)
+            consul_url = getattr(settings, 'CONFIG_CONSUL_URL', '').rstrip('/')
+            kv_prefix = getattr(settings, 'CONFIG_CONSUL_KV_PREFIX', 'configs/mdl')
+            default_consul_space = '{}/v1/kv/{}/{}/{}/'.format(
+                consul_url, kv_prefix, st_name, inst_name)
+
+            # 从 MdlServer 表匹配同 IP 的记录，复用已有部署信息
+            mdl_server = MdlServer.objects.filter(ip=host_ip).first() if host_ip else None
+            defaults = {
+                'host_ip': host_ip,
+                'port': port,
+                'consul_space': mdl_server.consul_space if mdl_server and mdl_server.consul_space else default_consul_space,
+                'install_dir': mdl_server.install_dir if mdl_server else '',
+                'backups_dir': mdl_server.backups_dir if mdl_server else '',
+                'service_name': mdl_server.service_name if mdl_server else '',
+                'consul_files': mdl_server.consul_files if mdl_server else 'feeder_handler.cfg',
+                'remote_python': mdl_server.remote_python if mdl_server else '/usr/bin/python3',
+            }
             instance, created = ConfigInstance.objects.update_or_create(
                 service_type=service_type,
                 name=inst_name,
-                defaults={'host_ip': host_ip, 'port': port}
+                defaults=defaults,
             )
             if created:
                 results['instances'] += 1
@@ -405,7 +422,12 @@ def _run_deploy_task(deploy_task_id):
             host_vars = {
                 'user': ssh_user,
                 'remote_python': instance.remote_python or '/usr/bin/python3',
-                'consul_space': instance.consul_space or '',
+                'consul_space': instance.consul_space or '{}/v1/kv/{}/{}/{}/'.format(
+                    getattr(settings, 'CONFIG_CONSUL_URL', '').rstrip('/'),
+                    getattr(settings, 'CONFIG_CONSUL_KV_PREFIX', 'configs/mdl'),
+                    instance.service_type.name,
+                    instance.name,
+                ),
                 'consul_token': getattr(settings, 'CONFIG_CONSUL_TOKEN',
                                         getattr(settings, 'CONSUL_TOKEN', '')),
                 'install_dir': install_dir,

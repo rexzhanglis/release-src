@@ -15,11 +15,20 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from django.http import JsonResponse
 import django_cas_ng.views
+
+
+def dashboard_category_count(request):
+    return JsonResponse({'code': 200, 'message': None, 'data': {
+        'appModule': 0, 'db': 0, 'server': 0, 'network': 0
+    }})
+
 
 urlpatterns = [
     path('admin', admin.site.urls),
     path('api/', include(('api.urls', 'api'), namespace='api')),
+    path('dashboard/get_category_count/', dashboard_category_count),
     path('login', django_cas_ng.views.LoginView.as_view(), name='cas_ng_login'),
     path('logout/', django_cas_ng.views.LogoutView.as_view(), name='cas_ng_logout'),
 ]

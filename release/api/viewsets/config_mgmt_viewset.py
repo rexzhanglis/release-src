@@ -305,7 +305,6 @@ def _sync_from_gitlab():
                 'host_ip': host_ip,
                 'port': port,
                 'consul_space': mdl_server.consul_space if mdl_server and mdl_server.consul_space else default_consul_space,
-                'consul_token': mdl_server.consul_token if mdl_server else None,
                 'install_dir': mdl_server.install_dir if mdl_server else '',
                 'backups_dir': mdl_server.backups_dir if mdl_server else '',
                 'service_name': mdl_server.service_name if mdl_server else '',

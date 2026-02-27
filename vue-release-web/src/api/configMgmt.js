@@ -168,6 +168,38 @@ export function getConfigInstances(params) {
 }
 
 /**
+ * 新增配置实例
+ */
+export function createConfigInstance(data) {
+  return request({
+    url: '/config-mgmt/instances/',
+    method: 'post',
+    data
+  })
+}
+
+/**
+ * 删除配置实例
+ */
+export function deleteConfigInstance(id) {
+  return request({
+    url: `/config-mgmt/instances/${id}/`,
+    method: 'delete'
+  })
+}
+
+/**
+ * 新增配置文件
+ */
+export function createConfigFile(data) {
+  return request({
+    url: '/config-mgmt/configs/',
+    method: 'post',
+    data
+  })
+}
+
+/**
  * 获取审计日志列表
  * @param {Object} params - { action, operator, date_from, date_to, keyword, page, page_size }
  */

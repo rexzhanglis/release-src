@@ -46,6 +46,14 @@
             @input="handleSearch"
             @clear="handleSearch"
           />
+          <el-button
+            v-if="canOperate"
+            size="mini"
+            type="primary"
+            icon="el-icon-plus"
+            style="width:100%;margin-top:8px"
+            @click="showAddInstance = true"
+          >新增实例</el-button>
         </div>
         <div v-loading="treeLoading" class="tree-body">
           <el-tree
@@ -103,6 +111,12 @@
       </div>
     </div>
 
+    <!-- 新增实例弹窗 -->
+    <add-instance-modal
+      v-model="showAddInstance"
+      @success="refreshTree"
+    />
+
     <!-- 批量修改弹窗 -->
     <batch-edit-modal
       v-model="showBatchEdit"
@@ -138,6 +152,7 @@
 <script>
 import { getConfigTree, getConfigDetail, updateConfig, syncFromGitlab, gitCommit, pushConsul } from '@/api/configMgmt'
 import ConfigEditor from './components/ConfigEditor'
+import AddInstanceModal from './components/AddInstanceModal'
 import BatchEditModal from './components/BatchEditModal'
 import DeployModal from './components/DeployModal'
 import AuditLogModal from './components/AuditLogModal'
@@ -148,6 +163,7 @@ export default {
   name: 'MdlConfigManagement',
   components: {
     ConfigEditor,
+    AddInstanceModal,
     BatchEditModal,
     DeployModal,
     AuditLogModal,
@@ -176,6 +192,7 @@ export default {
       checkedInstances: [],
 
       // 弹窗控制
+      showAddInstance: false,
       showBatchEdit: false,
       showDeploy: false,
       showAuditLog: false,

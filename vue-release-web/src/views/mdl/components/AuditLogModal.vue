@@ -74,13 +74,18 @@
       <el-table-column prop="filename" label="配置文件" width="160" show-overflow-tooltip />
       <el-table-column prop="instance_names" label="实例" min-width="160" show-overflow-tooltip />
       <el-table-column prop="summary" label="摘要" min-width="220" show-overflow-tooltip />
-      <el-table-column label="详情" width="70" align="center">
+      <el-table-column label="操作" width="120" align="center">
         <template slot-scope="{ row }">
           <el-button
             v-if="row.detail"
             size="mini" type="text" icon="el-icon-document"
             @click="showDetail(row)"
-          >查看</el-button>
+          >详情</el-button>
+          <el-button
+            v-if="row.action === 'deploy' && row.deploy_task_id"
+            size="mini" type="text" style="color:#e6a23c" icon="el-icon-refresh-left"
+            @click="handleDeployRollback(row)"
+          >回滚</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -119,6 +124,12 @@
         </div>
       </template>
       <div slot="footer">
+        <el-button
+          v-if="detailRow && detailRow.action === 'deploy' && detailRow.deploy_task_id"
+          size="small" type="warning" icon="el-icon-refresh-left"
+          :loading="rollbackLoading"
+          @click="handleDeployRollback(detailRow)"
+        >回滚到此次部署前</el-button>
         <el-button size="small" @click="detailVisible = false">关闭</el-button>
       </div>
     </el-dialog>
@@ -131,7 +142,7 @@
 </template>
 
 <script>
-import { getAuditLogs, getDeployTaskDetail } from '@/api/configMgmt'
+import { getAuditLogs, getDeployTaskDetail, rollbackDeployTask } from '@/api/configMgmt'
 
 const ACTION_TAG_MAP = {
   save:         '',
@@ -170,8 +181,10 @@ export default {
       detailVisible: false,
       detailText: '',
       detailTitle: '详情',
+      detailRow: null,
       deployLog: '',
       deployLogLoading: false,
+      rollbackLoading: false,
     }
   },
   methods: {
@@ -226,6 +239,28 @@ export default {
     actionTagType(action) {
       return ACTION_TAG_MAP[action] || ''
     },
+    async handleDeployRollback(row) {
+      try {
+        await this.$confirm(
+          `确认回滚部署任务 #${row.deploy_task_id} 的所有配置文件到部署前的状态？`,
+          '回滚确认',
+          { type: 'warning', confirmButtonText: '确认回滚', cancelButtonText: '取消' }
+        )
+      } catch { return }
+
+      this.rollbackLoading = true
+      try {
+        const res = await rollbackDeployTask(row.deploy_task_id)
+        this.$message.success(res.data.message || '回滚成功')
+        this.detailVisible = false
+      } catch (e) {
+        const msg = (e.response && e.response.data && e.response.data.message) || e.message
+        this.$message.error('回滚失败: ' + msg)
+      } finally {
+        this.rollbackLoading = false
+      }
+    },
+
     async showDetail(row) {
       try {
         const obj = JSON.parse(row.detail)
@@ -234,6 +269,7 @@ export default {
         this.detailText = row.detail
       }
       this.detailTitle = row.action === 'deploy' ? '部署详情' : '操作详情'
+      this.detailRow = row
       this.deployLog = ''
       this.detailVisible = true
 

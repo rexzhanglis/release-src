@@ -110,10 +110,11 @@ class ConfigFile(TimestampedModel):
 class ConfigHistory(TimestampedModel):
     """MDL 配置文件历史快照，每次 save / batch_update / text_replace 时写入"""
     ACTION_CHOICES = [
-        ('save',         '保存配置'),
-        ('batch_update', '批量修改'),
-        ('text_replace', '文本替换'),
-        ('rollback',     '回滚'),
+        ('save',            '保存配置'),
+        ('batch_update',    '批量修改'),
+        ('text_replace',    '文本替换'),
+        ('rollback',        '回滚'),
+        ('deploy_snapshot', '部署前快照'),
     ]
     config_file = models.ForeignKey(
         ConfigFile, verbose_name="配置文件",
@@ -142,6 +143,10 @@ class ConfigDeployTask(TimestampedModel):
         ('failed', 'failed'),
     ]
     instances = models.ManyToManyField(ConfigInstance, verbose_name="部署实例", blank=True)
+    snapshots = models.ManyToManyField(
+        'ConfigHistory', verbose_name="部署前快照", blank=True,
+        related_name='deploy_tasks'
+    )
     operator = models.CharField("操作人", max_length=100)
     status = models.CharField("任务状态", max_length=20, choices=STATUS_CHOICES, default='pending')
     log = models.TextField("执行日志", null=True, blank=True)

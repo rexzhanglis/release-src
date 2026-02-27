@@ -1123,6 +1123,24 @@ class ConfigDeployViewSet(viewsets.ViewSet):
         task.instances.set(instances)
         task.save()
 
+        # 部署前快照：记录所有涉及配置文件的当前内容
+        try:
+            snapshot_ids = []
+            config_files = ConfigFile.objects.filter(instance__in=instances)
+            for cf in config_files:
+                h = ConfigHistory.objects.create(
+                    config_file=cf,
+                    content=cf.content or {},
+                    action='deploy_snapshot',
+                    operator=operator,
+                    remark=f'部署任务 #{task.id} 前快照',
+                )
+                snapshot_ids.append(h.id)
+            if snapshot_ids:
+                task.snapshots.set(snapshot_ids)
+        except Exception:
+            pass
+
         # 后台线程执行
         thread = threading.Thread(target=_run_deploy_task, args=(task.id,))
         thread.daemon = True
@@ -1141,6 +1159,40 @@ class ConfigDeployViewSet(viewsets.ViewSet):
         except ConfigDeployTask.DoesNotExist:
             return Response({'code': 404, 'message': '任务不存在', 'data': None},
                             status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'], url_path='rollback')
+    def rollback(self, request, pk=None):
+        """回滚到该部署任务执行前的配置快照"""
+        try:
+            task = ConfigDeployTask.objects.prefetch_related('snapshots__config_file').get(id=pk)
+        except ConfigDeployTask.DoesNotExist:
+            return Response({'code': 404, 'message': '任务不存在', 'data': None},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        snapshots = task.snapshots.select_related('config_file').all()
+        if not snapshots.exists():
+            return Response({'code': 400, 'message': '该部署任务无快照，无法回滚', 'data': None},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        operator = str(request.user) if request.user else 'system'
+        rolled_back = []
+        for snap in snapshots:
+            cf = snap.config_file
+            # 回滚前先保存当前内容
+            _snapshot(cf, action='rollback', operator=operator,
+                      remark=f'回滚部署任务 #{task.id}')
+            cf.content = snap.content
+            cf.save(update_fields=['content'])
+            rolled_back.append(cf.filename)
+
+        _audit(action='rollback', operator=operator,
+               summary=f'回滚部署任务 #{task.id}，共 {len(rolled_back)} 个配置文件',
+               detail=json.dumps({'task_id': task.id, 'files': rolled_back}, ensure_ascii=False))
+
+        return ApiResponse(data={
+            'message': f'已回滚 {len(rolled_back)} 个配置文件',
+            'files': rolled_back,
+        })
 
 
 class ConfigAuditLogSerializer(serializers.ModelSerializer):

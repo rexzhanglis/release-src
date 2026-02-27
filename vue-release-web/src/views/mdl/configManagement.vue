@@ -171,6 +171,7 @@ export default {
 
       // 选中状态
       checkedConfigIds: [],
+      checkedConfigLabels: [],
       checkedInstanceIds: [],
       checkedInstances: [],
 
@@ -231,9 +232,9 @@ export default {
 
     handleCheck() {
       const checked = this.$refs.configTree.getCheckedNodes(false, false)
-      this.checkedConfigIds = checked
-        .filter(n => n.type === 'config')
-        .map(n => n.data.config_id)
+      const configNodes = checked.filter(n => n.type === 'config')
+      this.checkedConfigIds = configNodes.map(n => n.data.config_id)
+      this.checkedConfigLabels = configNodes.map(n => n.label)
 
       const instanceMap = {}
       checked.filter(n => n.type === 'instance').forEach(n => {
@@ -314,8 +315,9 @@ export default {
         this.$message.warning('请先勾选要提交的配置文件')
         return
       }
+      const fileList = [...new Set(this.checkedConfigLabels)].join(', ')
       this.$prompt('请输入提交信息', '提交到 GitLab', {
-        inputValue: 'Update configs',
+        inputValue: `Update configs: ${fileList}`,
         confirmButtonText: '提交',
         cancelButtonText: '取消'
       }).then(async ({ value }) => {

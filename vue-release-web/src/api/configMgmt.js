@@ -222,6 +222,16 @@ export function rollbackConfig(historyId) {
 }
 
 /**
+ * 回滚部署任务（恢复到部署前快照）
+ */
+export function rollbackDeployTask(taskId) {
+  return request({
+    url: `/config-mgmt/deploy/${taskId}/rollback/`,
+    method: 'post'
+  })
+}
+
+/**
  * 一致性巡检
  * @param {Object} params - { service_type_id?, filename? }
  */

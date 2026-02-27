@@ -151,7 +151,9 @@ export default {
         this.items = res.data.items || []
         this.total = res.data.total || 0
       } catch (e) {
-        this.$message.error('加载历史记录失败')
+        const msg = (e.response && e.response.data &&
+          (e.response.data.message || e.response.data.detail)) || e.message || '未知错误'
+        this.$message.error('加载历史记录失败: ' + msg)
       } finally {
         this.loading = false
       }

@@ -6,9 +6,29 @@
     :close-on-click-modal="false"
     @open="handleOpen"
   >
-    <el-alert type="info" :closable="false" style="margin-bottom: 16px">
-      将对选中的 {{ checkedInstanceIds.length }} 个实例进行批量修改
-    </el-alert>
+    <!-- 选中实例列表 -->
+    <div class="instance-summary">
+      <div class="instance-summary-title">
+        <i class="el-icon-monitor" style="color:#409eff"></i>
+        将对以下 <strong>{{ checkedInstanceIds.length }}</strong> 个实例进行批量修改
+      </div>
+      <div class="instance-tags">
+        <span
+          v-for="inst in checkedInstances"
+          :key="inst.id"
+          class="inst-tag"
+        >
+          <span class="inst-tag-name">{{ inst.name }}</span>
+          <span v-if="inst.host_ip" class="inst-tag-ip">{{ inst.host_ip }}</span>
+          <el-tooltip v-if="inst.host_ip" content="复制 SSH 命令" placement="top">
+            <i
+              class="el-icon-copy-document inst-tag-copy"
+              @click="copySSH(inst)"
+            ></i>
+          </el-tooltip>
+        </span>
+      </div>
+    </div>
 
     <el-form label-width="100px">
       <el-form-item label="配置文件">
@@ -236,6 +256,10 @@ export default {
       default: false
     },
     checkedInstanceIds: {
+      type: Array,
+      default: () => []
+    },
+    checkedInstances: {
       type: Array,
       default: () => []
     }
@@ -468,6 +492,24 @@ export default {
       }
     },
 
+    copySSH(inst) {
+      const cmd = `ssh ${inst.host_ip}`
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(cmd).then(() => {
+          this.$message.success(`已复制: ${cmd}`)
+        })
+      } else {
+        // 降级方案
+        const el = document.createElement('textarea')
+        el.value = cmd
+        document.body.appendChild(el)
+        el.select()
+        document.execCommand('copy')
+        document.body.removeChild(el)
+        this.$message.success(`已复制: ${cmd}`)
+      }
+    },
+
     // -------- 文本替换 --------
 
     async handlePreview() {
@@ -576,6 +618,51 @@ export default {
 .tree-node { display: flex; align-items: center; }
 .tree-node-label { font-size: 13px; }
 .missing-val { color: #f56c6c; font-style: italic; }
+
+/* 实例摘要 */
+.instance-summary {
+  background: #f0f7ff;
+  border: 1px solid #d0e8ff;
+  border-radius: 4px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+}
+.instance-summary-title {
+  font-size: 13px;
+  color: #303133;
+  margin-bottom: 8px;
+}
+.instance-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.inst-tag {
+  display: inline-flex;
+  align-items: center;
+  background: #fff;
+  border: 1px solid #c6e0f5;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 12px;
+  gap: 6px;
+}
+.inst-tag-name {
+  font-weight: 600;
+  color: #303133;
+}
+.inst-tag-ip {
+  color: #409eff;
+  font-family: monospace;
+}
+.inst-tag-copy {
+  color: #909399;
+  cursor: pointer;
+  font-size: 13px;
+}
+.inst-tag-copy:hover {
+  color: #409eff;
+}
 
 /* 文本替换 Tab */
 .text-replace-area {

@@ -188,3 +188,47 @@ export function getServiceTypes() {
     method: 'get'
   })
 }
+
+/**
+ * 获取配置历史列表
+ * @param {Object} params - { config_id, page, page_size }
+ */
+export function getConfigHistory(params) {
+  return request({
+    url: '/config-mgmt/history/',
+    method: 'get',
+    params
+  })
+}
+
+/**
+ * 获取单条历史详情（含 content）
+ */
+export function getConfigHistoryDetail(id) {
+  return request({
+    url: `/config-mgmt/history/${id}/`,
+    method: 'get'
+  })
+}
+
+/**
+ * 回滚到指定历史版本
+ */
+export function rollbackConfig(historyId) {
+  return request({
+    url: `/config-mgmt/history/${historyId}/rollback/`,
+    method: 'post'
+  })
+}
+
+/**
+ * 一致性巡检
+ * @param {Object} params - { service_type_id?, filename? }
+ */
+export function consistencyCheck(params) {
+  return request({
+    url: '/config-mgmt/configs/consistency_check/',
+    method: 'get',
+    params
+  })
+}

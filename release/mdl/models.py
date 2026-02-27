@@ -107,6 +107,32 @@ class ConfigFile(TimestampedModel):
         verbose_name_plural = "配置文件"
 
 
+class ConfigHistory(TimestampedModel):
+    """MDL 配置文件历史快照，每次 save / batch_update / text_replace 时写入"""
+    ACTION_CHOICES = [
+        ('save',         '保存配置'),
+        ('batch_update', '批量修改'),
+        ('text_replace', '文本替换'),
+        ('rollback',     '回滚'),
+    ]
+    config_file = models.ForeignKey(
+        ConfigFile, verbose_name="配置文件",
+        on_delete=models.CASCADE, related_name='histories'
+    )
+    content     = models.JSONField("配置内容快照")
+    action      = models.CharField("触发操作", max_length=20, choices=ACTION_CHOICES, default='save')
+    operator    = models.CharField("操作人", max_length=100, default='system')
+    remark      = models.CharField("备注", max_length=300, blank=True, default='')
+
+    class Meta:
+        verbose_name = "配置历史"
+        verbose_name_plural = "配置历史"
+        ordering = ['-created_time']
+
+    def __str__(self):
+        return f"History({self.config_file_id}) {self.action} @ {self.created_time:%Y-%m-%d %H:%M}"
+
+
 class ConfigDeployTask(TimestampedModel):
     """MDL 配置部署任务"""
     STATUS_CHOICES = [

@@ -15,6 +15,7 @@ from api.viewsets.config_mgmt_viewset import (
     ConfigInstanceViewSet,
     ServiceTypeViewSet,
     ConfigAuditLogViewSet,
+    ConfigHistoryViewSet,
 )
 
 router = DefaultRouter()
@@ -34,6 +35,7 @@ router.register(r'config-mgmt/deploy', ConfigDeployViewSet, basename="config-dep
 router.register(r'config-mgmt/instances', ConfigInstanceViewSet, basename="config-instance")
 router.register(r'config-mgmt/service-types', ServiceTypeViewSet, basename="config-service-type")
 router.register(r'config-mgmt/audit-logs', ConfigAuditLogViewSet, basename="config-audit-log")
+router.register(r'config-mgmt/history', ConfigHistoryViewSet, basename="config-history")
 
 urlpatterns = [
     path('', include(router.urls)),

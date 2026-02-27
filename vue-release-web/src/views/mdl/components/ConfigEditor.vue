@@ -34,6 +34,11 @@ export default {
     this.editor.onDidChangeModelContent(() => {
       this.$emit('change', this.editor.getValue())
     })
+    // Ctrl+S / Cmd+S 触发保存
+    this.editor.addCommand(
+      monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
+      () => { this.$emit('save') }
+    )
   },
   watch: {
     content(val) {

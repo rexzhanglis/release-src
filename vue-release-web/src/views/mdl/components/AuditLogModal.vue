@@ -50,6 +50,7 @@
       size="small"
       border
       style="width:100%"
+      empty-text=" "
     >
       <el-table-column prop="created_time" label="时间" width="160">
         <template slot-scope="{ row }">
@@ -84,6 +85,12 @@
       </el-table-column>
     </el-table>
 
+    <!-- 空状态 -->
+    <div v-if="!loading && items.length === 0" class="empty-placeholder">
+      <i class="el-icon-document" style="font-size:40px;color:#dcdfe6"></i>
+      <p style="color:#909399;margin-top:8px;font-size:13px">暂无操作记录</p>
+    </div>
+
     <!-- 分页 -->
     <div style="margin-top:12px;text-align:right">
       <el-pagination
@@ -95,24 +102,36 @@
       />
     </div>
 
-    <!-- 详情抽屉 -->
+    <!-- 详情弹窗 -->
     <el-dialog
       :visible.sync="detailVisible"
-      title="详情"
-      width="600px"
+      :title="detailTitle"
+      width="680px"
       append-to-body
     >
       <pre class="detail-pre">{{ detailText }}</pre>
+      <template v-if="deployLog || deployLogLoading">
+        <el-divider content-position="left" style="margin:16px 0 10px">
+          <i class="el-icon-tickets"></i> 部署日志
+        </el-divider>
+        <div v-loading="deployLogLoading">
+          <pre class="detail-pre deploy-log-pre">{{ deployLog }}</pre>
+        </div>
+      </template>
+      <div slot="footer">
+        <el-button size="small" @click="detailVisible = false">关闭</el-button>
+      </div>
     </el-dialog>
 
-    <div slot="footer">
+    <div slot="footer" style="display:flex;justify-content:space-between;align-items:center">
+      <el-button size="small" icon="el-icon-refresh" :loading="loading" @click="fetchLogs()">刷新</el-button>
       <el-button @click="dialogVisible = false">关闭</el-button>
     </div>
   </el-dialog>
 </template>
 
 <script>
-import { getAuditLogs } from '@/api/configMgmt'
+import { getAuditLogs, getDeployTaskDetail } from '@/api/configMgmt'
 
 const ACTION_TAG_MAP = {
   save:         '',
@@ -149,7 +168,10 @@ export default {
         keyword: ''
       },
       detailVisible: false,
-      detailText: ''
+      detailText: '',
+      detailTitle: '详情',
+      deployLog: '',
+      deployLogLoading: false,
     }
   },
   methods: {
@@ -194,20 +216,39 @@ export default {
       }
     },
     formatTime(t) {
-      if (!t) return ''
-      return t.replace('T', ' ').slice(0, 19)
+      if (!t) return '-'
+      try {
+        return new Date(t).toLocaleString('zh-CN', { hour12: false })
+      } catch {
+        return t.replace('T', ' ').slice(0, 19)
+      }
     },
     actionTagType(action) {
       return ACTION_TAG_MAP[action] || ''
     },
-    showDetail(row) {
+    async showDetail(row) {
       try {
         const obj = JSON.parse(row.detail)
         this.detailText = JSON.stringify(obj, null, 2)
       } catch (e) {
         this.detailText = row.detail
       }
+      this.detailTitle = row.action === 'deploy' ? '部署详情' : '操作详情'
+      this.deployLog = ''
       this.detailVisible = true
+
+      // deploy 操作：额外加载部署日志
+      if (row.action === 'deploy' && row.deploy_task_id) {
+        this.deployLogLoading = true
+        try {
+          const res = await getDeployTaskDetail(row.deploy_task_id)
+          this.deployLog = res.data.log || '（无日志）'
+        } catch {
+          this.deployLog = '加载部署日志失败'
+        } finally {
+          this.deployLogLoading = false
+        }
+      }
     }
   }
 }
@@ -215,14 +256,29 @@ export default {
 
 <style scoped>
 .detail-pre {
-  background: #1e1e1e;
-  color: #d4d4d4;
-  padding: 12px;
+  background: #f5f7fa;
+  color: #303133;
+  border: 1px solid #e4e7ed;
+  padding: 12px 16px;
   border-radius: 4px;
   font-size: 12px;
-  max-height: 400px;
+  line-height: 1.6;
+  max-height: 420px;
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-all;
+  margin: 0;
+}
+
+.empty-placeholder {
+  text-align: center;
+  padding: 32px 0 16px;
+}
+
+.deploy-log-pre {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border-color: #3c3c3c;
+  max-height: 280px;
 }
 </style>

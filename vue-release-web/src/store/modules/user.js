@@ -7,7 +7,8 @@ const getDefaultState = () => {
     token: getToken(),
     name: '',
     avatar: '',
-    roles: []
+    roles: [],
+    configRole: 'config_viewer'  // config_admin | config_operator | config_viewer
   }
 }
 
@@ -28,6 +29,9 @@ const mutations = {
   },
   SET_ROLES: (state, roles) => {
     state.roles = roles
+  },
+  SET_CONFIG_ROLE: (state, configRole) => {
+    state.configRole = configRole || 'config_viewer'
   }
 }
 
@@ -59,7 +63,7 @@ const actions = {
           reject('Verification failed, please Login again.')
         }
 
-        const { roles, name, avatar } = data
+        const { roles, name, avatar, config_role } = data
 
         // roles must be a non-empty array
         if (!roles || roles.length <= 0) {
@@ -69,6 +73,7 @@ const actions = {
         commit('SET_ROLES', roles)
         commit('SET_NAME', name)
         commit('SET_AVATAR', avatar)
+        commit('SET_CONFIG_ROLE', config_role)
         resolve(data)
       }).catch(error => {
         reject(error)

@@ -34,9 +34,11 @@ from rest_framework.response import Response
 
 from django.conf import settings
 from django.db import models
+from django.db.models import Prefetch
 
-from mdl.models import ServiceType, ConfigInstance, ConfigFile, ConfigDeployTask, ConfigAuditLog, MdlServer
+from mdl.models import ServiceType, ConfigInstance, ConfigFile, ConfigDeployTask, ConfigAuditLog, ConfigHistory, MdlServer
 from common.utils.apiutil import ApiResponse
+from api.permissions.config_permission import ConfigMgmtPermission, ConfigDeployPermission
 
 
 # ===================================================================
@@ -57,6 +59,21 @@ def _audit(request, action, status='success', instance_names=None, filename='',
             summary=summary or '',
             detail=json.dumps(detail, ensure_ascii=False) if detail is not None else '',
             deploy_task=deploy_task,
+        )
+    except Exception:
+        pass
+
+
+def _snapshot(request, config_file, action='save', remark=''):
+    """保存配置快照到历史表，失败不影响主流程"""
+    try:
+        operator = str(request.user) if request.user and request.user.is_authenticated else 'system'
+        ConfigHistory.objects.create(
+            config_file=config_file,
+            content=config_file.content or {},
+            action=action,
+            operator=operator,
+            remark=remark,
         )
     except Exception:
         pass
@@ -625,21 +642,35 @@ class ConfigDeployTaskSerializer(serializers.ModelSerializer):
 
 class ConfigTreeViewSet(viewsets.ViewSet):
     """配置树：返回 ServiceType→Instance→ConfigFile 的层次结构"""
+    permission_classes = [ConfigMgmtPermission]
 
     def list(self, request):
         search = request.query_params.get('search', '').strip()
 
-        service_types = ServiceType.objects.all().order_by('name')
-        tree = []
+        # 使用 prefetch_related 一次性加载三层数据，避免 N+1 查询
+        files_prefetch = Prefetch(
+            'configfile_set',
+            queryset=ConfigFile.objects.only('id', 'filename', 'instance_id').order_by('filename'),
+        )
+        instances_prefetch = Prefetch(
+            'configinstance_set',
+            queryset=ConfigInstance.objects.only(
+                'id', 'name', 'host_ip', 'service_name', 'service_type_id'
+            ).order_by('name').prefetch_related(files_prefetch),
+        )
+        service_types = ServiceType.objects.only('id', 'name').prefetch_related(
+            instances_prefetch
+        ).order_by('name')
 
+        tree = []
         for st in service_types:
-            instances_qs = st.configinstance_set.all().order_by('name')
+            # 搜索在 Python 层过滤已预加载数据，不触发额外查询
+            all_instances = st.configinstance_set.all()
             if search:
-                instances_qs = instances_qs.filter(name__icontains=search)
+                all_instances = [i for i in all_instances if search.lower() in i.name.lower()]
 
             instances = []
-            for inst in instances_qs:
-                files = inst.configfile_set.all().order_by('filename')
+            for inst in all_instances:
                 instances.append({
                     'id': f'inst_{inst.id}',
                     'type': 'instance',
@@ -657,7 +688,7 @@ class ConfigTreeViewSet(viewsets.ViewSet):
                             'data': {'id': cfg.id, 'config_id': cfg.id},
                             'children': [],
                         }
-                        for cfg in files
+                        for cfg in inst.configfile_set.all()
                     ],
                 })
 
@@ -674,6 +705,7 @@ class ConfigTreeViewSet(viewsets.ViewSet):
 
 class ConfigFileViewSet(viewsets.ModelViewSet):
     """配置文件 CRUD + 批量操作 + Git + Consul"""
+    permission_classes = [ConfigMgmtPermission]
 
     queryset = ConfigFile.objects.select_related('instance', 'instance__service_type').all()
     serializer_class = ConfigFileSerializer
@@ -689,6 +721,7 @@ class ConfigFileViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         content = request.data.get('content')
         if content is not None:
+            _snapshot(request, instance, action='save')   # 先快照旧值
             instance.content = content
             instance.save(update_fields=['content'])
         _audit(request, 'save',
@@ -741,9 +774,12 @@ class ConfigFileViewSet(viewsets.ModelViewSet):
                             status=status.HTTP_400_BAD_REQUEST)
 
         updated = []
+        updated_names = []
         for instance_id in instance_ids:
             try:
-                config = ConfigFile.objects.get(instance_id=instance_id, filename=filename)
+                config = ConfigFile.objects.select_related('instance').get(
+                    instance_id=instance_id, filename=filename)
+                _snapshot(request, config, action='batch_update')  # 快照旧值
                 content = json.loads(json.dumps(config.content)) if config.content else {}
                 for key_path, value in updates.items():
                     if value == '__DELETE__':
@@ -753,13 +789,9 @@ class ConfigFileViewSet(viewsets.ModelViewSet):
                 config.content = content
                 config.save()
                 updated.append({'id': config.id, 'instance_id': instance_id})
+                updated_names.append(config.instance.name)
             except ConfigFile.DoesNotExist:
                 continue
-
-        updated_names = [
-            ConfigInstance.objects.get(id=u['instance_id']).name
-            for u in updated
-        ] if updated else []
         _audit(request, 'batch_update',
                instance_names=updated_names,
                filename=filename,
@@ -876,6 +908,8 @@ class ConfigFileViewSet(viewsets.ModelViewSet):
                             break
                 entry['diff_preview'] = diff_lines
             else:
+                _snapshot(request, config, action='text_replace',
+                          remark=f'查找: {search_text[:50]}')  # 快照旧值
                 config.content = new_content
                 config.save(update_fields=['content'])
 
@@ -927,9 +961,84 @@ class ConfigFileViewSet(viewsets.ModelViewSet):
             'results': results,
         })
 
+    @action(detail=False, methods=['get'], url_path='consistency_check')
+    def consistency_check(self, request):
+        """一致性巡检：对比同一服务类型下所有实例中同名配置文件的差异 key
+
+        请求参数:
+          service_type_id: (可选) 指定服务类型，不传则扫描全部
+          filename: (可选) 指定文件名，不传则扫描全部文件
+        返回:
+          每个 (service_type, filename) 组合下，哪些 key 在实例间存在差异
+        """
+        service_type_id = request.query_params.get('service_type_id')
+        filename_filter = request.query_params.get('filename', '').strip()
+
+        # 构建查询
+        qs = ConfigFile.objects.select_related('instance', 'instance__service_type')
+        if service_type_id:
+            qs = qs.filter(instance__service_type_id=service_type_id)
+        if filename_filter:
+            qs = qs.filter(filename=filename_filter)
+
+        # 按 (service_type, filename) 分组
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for cfg in qs:
+            key = (cfg.instance.service_type.name, cfg.filename)
+            groups[key].append({
+                'instance_id': cfg.instance_id,
+                'instance_name': cfg.instance.name,
+                'content': cfg.content or {},
+            })
+
+        report = []
+        for (st_name, fname), configs in sorted(groups.items()):
+            if len(configs) < 2:
+                # 只有一个实例，无需对比
+                report.append({
+                    'service_type': st_name,
+                    'filename': fname,
+                    'instance_count': len(configs),
+                    'diff_keys': [],
+                    'consistent': True,
+                })
+                continue
+
+            values_map = _merge_schemas(configs)
+            diff_keys = []
+            for key_path, inst_values in values_map.items():
+                values = list(inst_values.values())
+                # 序列化比较（避免 int/float 误差）
+                serialized = [json.dumps(v, sort_keys=True, ensure_ascii=False) for v in values]
+                if len(set(serialized)) > 1:
+                    diff_keys.append({
+                        'key': key_path,
+                        'values': {
+                            inst: json.dumps(v, ensure_ascii=False)
+                            for inst, v in inst_values.items()
+                        },
+                    })
+
+            report.append({
+                'service_type': st_name,
+                'filename': fname,
+                'instance_count': len(configs),
+                'diff_keys': diff_keys,
+                'consistent': len(diff_keys) == 0,
+            })
+
+        inconsistent_count = sum(1 for r in report if not r['consistent'])
+        return ApiResponse(data={
+            'total_groups': len(report),
+            'inconsistent_count': inconsistent_count,
+            'report': report,
+        })
+
 
 class ConfigSyncViewSet(viewsets.ViewSet):
     """从 GitLab 同步配置树到数据库"""
+    permission_classes = [ConfigMgmtPermission]
 
     def create(self, request):
         try:
@@ -946,7 +1055,8 @@ class ConfigSyncViewSet(viewsets.ViewSet):
 
 
 class ConfigDeployViewSet(viewsets.ViewSet):
-    """配置部署任务"""
+    """配置部署任务（list/preview 需要 operator，create 需要 admin）"""
+    permission_classes = [ConfigDeployPermission]
 
     def list(self, request):
         tasks = ConfigDeployTask.objects.order_by('-created_time')[:20]
@@ -1046,6 +1156,7 @@ class ConfigAuditLogSerializer(serializers.ModelSerializer):
 
 class ConfigAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     """审计日志（只读）"""
+    permission_classes = [ConfigMgmtPermission]
     queryset = ConfigAuditLog.objects.all()
     serializer_class = ConfigAuditLogSerializer
 
@@ -1087,8 +1198,68 @@ class ConfigAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         })
 
 
+class ConfigHistorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ConfigHistory
+        fields = ['id', 'config_file', 'content', 'action', 'operator', 'remark', 'created_time']
+
+
+class ConfigHistoryViewSet(viewsets.ViewSet):
+    """配置历史快照：查询（viewer 可读）+ 回滚（operator 及以上）"""
+    permission_classes = [ConfigMgmtPermission]
+
+    def list(self, request):
+        """GET /api/config-mgmt/history/?config_id=<id>&page=1&page_size=20"""
+        config_id = request.query_params.get('config_id')
+        if not config_id:
+            return Response({'code': 400, 'message': '缺少 config_id', 'data': None},
+                            status=status.HTTP_400_BAD_REQUEST)
+        page = int(request.query_params.get('page', 1))
+        page_size = int(request.query_params.get('page_size', 20))
+        qs = ConfigHistory.objects.filter(config_file_id=config_id).order_by('-created_time')
+        total = qs.count()
+        items = qs[(page - 1) * page_size: page * page_size]
+        return ApiResponse(data={
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+            'items': ConfigHistorySerializer(items, many=True).data,
+        })
+
+    def retrieve(self, request, pk=None):
+        """GET /api/config-mgmt/history/<id>/ - 查看某条历史详情（含 content）"""
+        try:
+            h = ConfigHistory.objects.get(id=pk)
+            return ApiResponse(data=ConfigHistorySerializer(h).data)
+        except ConfigHistory.DoesNotExist:
+            return Response({'code': 404, 'message': '历史记录不存在', 'data': None},
+                            status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'], url_path='rollback')
+    def rollback(self, request, pk=None):
+        """POST /api/config-mgmt/history/<id>/rollback/ - 回滚到此版本"""
+        try:
+            h = ConfigHistory.objects.select_related('config_file__instance__service_type').get(id=pk)
+        except ConfigHistory.DoesNotExist:
+            return Response({'code': 404, 'message': '历史记录不存在', 'data': None},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        config_file = h.config_file
+        # 先对当前内容打快照（回滚前保存当前状态）
+        _snapshot(request, config_file, action='rollback',
+                  remark=f'回滚前备份（目标历史 id={pk}）')
+        config_file.content = h.content
+        config_file.save(update_fields=['content'])
+        _audit(request, 'save',
+               instance_names=[config_file.instance.name],
+               filename=config_file.filename,
+               summary=f'回滚到历史版本 #{pk} ({h.created_time:%Y-%m-%d %H:%M})')
+        return ApiResponse(data={'message': f'已回滚到 {h.created_time:%Y-%m-%d %H:%M} 的版本'})
+
+
 class ConfigInstanceViewSet(viewsets.ModelViewSet):
     """配置实例 CRUD"""
+    permission_classes = [ConfigMgmtPermission]
     queryset = ConfigInstance.objects.select_related('service_type').all()
     serializer_class = ConfigInstanceSerializer
 
@@ -1102,5 +1273,6 @@ class ConfigInstanceViewSet(viewsets.ModelViewSet):
 
 class ServiceTypeViewSet(viewsets.ModelViewSet):
     """服务类型 CRUD"""
+    permission_classes = [ConfigMgmtPermission]
     queryset = ServiceType.objects.all().order_by('name')
     serializer_class = ServiceTypeSerializer

@@ -16,5 +16,8 @@ curl ${params}settings.py?raw > /datayes/release/release/settings.py
 
 service cron start
 
+# 自动执行数据库迁移（新表建表、字段变更等）
+python manage.py migrate --noinput
+
 /usr/bin/supervisord
 

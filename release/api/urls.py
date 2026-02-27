@@ -1,5 +1,12 @@
 from django.urls import path, include
+from django.http import JsonResponse
 from rest_framework.routers import DefaultRouter
+
+
+def dashboard_category_count(request):
+    return JsonResponse({'code': 200, 'message': None, 'data': {
+        'appModule': 0, 'db': 0, 'server': 0, 'network': 0
+    }})
 
 from api.viewsets.auth_viewset import AuthViewSet
 from api.viewsets.cmdb_viewset import CmdbViewSet
@@ -39,4 +46,5 @@ router.register(r'config-mgmt/history', ConfigHistoryViewSet, basename="config-h
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('dashboard/get_category_count/', dashboard_category_count),
 ]

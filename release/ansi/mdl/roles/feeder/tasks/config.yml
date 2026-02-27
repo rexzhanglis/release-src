@@ -2,7 +2,7 @@
   template: src=templates/consul_pull.py.j2 dest={{ install_dir }}/consul_pull.py owner={{ user }} group={{ user }}
 
 - name: consul pull 
-  shell: "{{ remote_python | default('/usr/bin/python3') }} {{ install_dir }}/consul_pull.py"
+  shell: "{{ remote_python | default('/usr/bin/python') }} {{ install_dir }}/consul_pull.py"
   environment:
     CONSUL_TOKEN: "{{ consul_token }}"
   become_user: "{{ user }}"

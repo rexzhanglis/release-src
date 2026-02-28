@@ -1,3 +1,6 @@
+- name: ensure local packages dir exists
+  local_action: file path=/datayes/mdl/packages state=directory mode='0755'
+
 - name: package stat
   local_action: stat path=/datayes/mdl/packages/{{ package_name }}
   register: package_stat

@@ -268,9 +268,13 @@ class MdlServerViewSet(viewsets.ModelViewSet):
             with open(os.path.join(host_vars_dir, 'release.yml'), 'w') as f:
                 yaml.dump(host_vars, f, allow_unicode=True)
 
-            # 写 ansible.cfg，让 Ansible 知道去 ansi_dir 找 roles
+            # 写 ansible.cfg，让 Ansible 知道去 ansi_dir 找 roles，并关闭 host key 检查
             with open(os.path.join(tmpdir, 'ansible.cfg'), 'w') as f:
-                f.write(f'[defaults]\nroles_path = {ansi_dir}/roles\n')
+                f.write(
+                    f'[defaults]\n'
+                    f'roles_path = {ansi_dir}/roles\n'
+                    f'host_key_checking = False\n'
+                )
 
             task = ConfigDeployTask.objects.create(
                 operator=operator,

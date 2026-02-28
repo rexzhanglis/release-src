@@ -1,4 +1,5 @@
 import os
+import shutil
 import tempfile
 import threading
 import yaml
@@ -11,7 +12,7 @@ from rest_framework import status as drf_status
 
 try:
     import ansible_runner
-except ImportError:
+except Exception:
     import subprocess
 
     class AnsibleRunnerMock:
@@ -22,7 +23,7 @@ except ImportError:
                 print(f"[MOCK] Executing: {executable_cmd} {' '.join(cmdline_args)}")
                 return "Mock Ansible Success\nSkipping actual execution on Windows.", "", 0
             try:
-                env = kwargs.get('env', os.environ.copy())
+                env = kwargs.get('envvars', kwargs.get('env', os.environ.copy()))
                 cwd = kwargs.get('cwd', None)
                 res = subprocess.run([executable_cmd] + cmdline_args,
                                      capture_output=True, text=True, env=env, cwd=cwd)
@@ -219,13 +220,22 @@ class MdlServerViewSet(viewsets.ModelViewSet):
             ansi_dir = os.path.abspath(
                 os.path.join(os.path.dirname(__file__), '..', '..', 'ansi', 'mdl')
             )
-            playbook_path = os.path.join(ansi_dir, 'deploy_feeder_init.yml')
 
-            # 写临时目录（避免与现有 ansi/mdl/hosts 并发冲突）
+            # 把整个 ansi_dir 复制到临时目录（与配置管理部署方式一致）
+            # 这样 roles/、playbook、host_vars 都在同一目录，Ansible 天然能找到
             tmpdir = tempfile.mkdtemp(prefix='mdl_init_')
+            for item in os.listdir(ansi_dir):
+                src = os.path.join(ansi_dir, item)
+                dst = os.path.join(tmpdir, item)
+                if os.path.isdir(src):
+                    shutil.copytree(src, dst)
+                else:
+                    shutil.copy2(src, dst)
+
+            playbook_path = os.path.join(tmpdir, 'deploy_feeder_init.yml')
             hosts_path = os.path.join(tmpdir, 'hosts')
             host_vars_dir = os.path.join(tmpdir, 'host_vars')
-            os.makedirs(host_vars_dir)
+            os.makedirs(host_vars_dir, exist_ok=True)
 
             with open(hosts_path, 'w') as f:
                 f.write(f"release ansible_ssh_host={server.ip} "
@@ -268,14 +278,6 @@ class MdlServerViewSet(viewsets.ModelViewSet):
             with open(os.path.join(host_vars_dir, 'release.yml'), 'w') as f:
                 yaml.dump(host_vars, f, allow_unicode=True)
 
-            # 写 ansible.cfg，让 Ansible 知道去 ansi_dir 找 roles，并关闭 host key 检查
-            with open(os.path.join(tmpdir, 'ansible.cfg'), 'w') as f:
-                f.write(
-                    f'[defaults]\n'
-                    f'roles_path = {ansi_dir}/roles\n'
-                    f'host_key_checking = False\n'
-                )
-
             task = ConfigDeployTask.objects.create(
                 operator=operator,
                 status='running',
@@ -285,40 +287,22 @@ class MdlServerViewSet(viewsets.ModelViewSet):
             def run():
                 # 子线程不能复用主线程的数据库连接，关闭后 Django 会自动建新连接
                 from django.db import connection as _db_conn
+                import subprocess as _sp
+                import traceback as _tb
                 _db_conn.close()
                 try:
                     env = os.environ.copy()
                     env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
-                    env['ANSIBLE_CONFIG'] = os.path.join(tmpdir, 'ansible.cfg')
-                    try:
-                        out, err, rc = ansible_runner.run_command(
-                            executable_cmd='ansible-playbook',
-                            cmdline_args=[
-                                playbook_path,
-                                '-i', hosts_path,
-                                '-v',
-                            ],
-                            cwd=tmpdir,
-                            envvars=env,
-                        )
-                    except TypeError:
-                        # 部分版本 ansible_runner 不支持 envvars，回退到 subprocess
-                        import subprocess as _sp
-                        res = _sp.run(
-                            ['ansible-playbook', playbook_path, '-i', hosts_path, '-v'],
-                            capture_output=True, text=True, env=env, cwd=tmpdir,
-                        )
-                        out, err, rc = res.stdout, res.stderr, res.returncode
-                    combined = ''
-                    if out:
-                        combined += out
-                    if err:
-                        combined += '\n[stderr]\n' + err
+                    proc = _sp.run(
+                        ['ansible-playbook', playbook_path, '-i', hosts_path, '-vv'],
+                        stdout=_sp.PIPE, stderr=_sp.STDOUT,
+                        text=True, env=env,
+                    )
                     task.refresh_from_db()
-                    task.log = (task.log or '') + combined
-                    task.status = 'success' if rc == 0 else 'failed'
+                    task.log = (task.log or '') + (proc.stdout or '')
+                    task.status = 'success' if proc.returncode == 0 else 'failed'
                 except Exception as ex:
-                    task.log = (task.log or '') + f'\n[错误] {ex}'
+                    task.log = (task.log or '') + f'\n[错误] {ex}\n{_tb.format_exc()}'
                     task.status = 'failed'
                 finally:
                     task.finished_at = datetime.now()

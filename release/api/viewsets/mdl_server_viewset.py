@@ -214,35 +214,33 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 except Exception:
                     ssh_pass = ''
 
-            is_egress = request.data.get('is_egress', '0') in ('1', 'true', True)
             operator = request.user.username if request.user.is_authenticated else 'unknown'
 
             ansi_dir = os.path.abspath(
                 os.path.join(os.path.dirname(__file__), '..', '..', 'ansi', 'mdl')
             )
 
-            # 把整个 ansi_dir 复制到临时目录（与配置管理部署方式一致）
-            # 这样 roles/、playbook、host_vars 都在同一目录，Ansible 天然能找到
-            tmpdir = tempfile.mkdtemp(prefix='mdl_init_')
-            for item in os.listdir(ansi_dir):
-                src = os.path.join(ansi_dir, item)
-                dst = os.path.join(tmpdir, item)
-                if os.path.isdir(src):
-                    shutil.copytree(src, dst)
-                else:
-                    shutil.copy2(src, dst)
+            # 上传的出口机器文件需在主线程读取（request 对象不能跨线程）
+            egress_file_data = []   # [(filename, bytes), ...]
+            anaconda_file_data = None  # (filename, bytes)
+            is_egress = request.data.get('is_egress', '0') in ('1', 'true', True)
+            if is_egress:
+                for f in request.FILES.getlist('egress_files'):
+                    egress_file_data.append((f.name, f.read()))
+                anaconda_file = request.FILES.get('anaconda_file')
+                if anaconda_file:
+                    anaconda_file_data = (anaconda_file.name, anaconda_file.read())
 
-            playbook_path = os.path.join(tmpdir, 'deploy_feeder_init.yml')
-            hosts_path = os.path.join(tmpdir, 'hosts')
-            host_vars_dir = os.path.join(tmpdir, 'host_vars')
-            os.makedirs(host_vars_dir, exist_ok=True)
+            task = ConfigDeployTask.objects.create(
+                operator=operator,
+                status='running',
+                log=f'[{datetime.now():%Y-%m-%d %H:%M:%S}] 开始初始化系统环境：{server.fqdn} ({server.ip})\n',
+            )
 
-            with open(hosts_path, 'w') as f:
-                f.write(f"release ansible_ssh_host={server.ip} "
-                        f"ansible_ssh_user={ssh_user} "
-                        f"ansible_ssh_pass={ssh_pass}\n")
-
-            host_vars = {
+            # 捕获所有需要的变量，避免闭包引用 request
+            _server_ip = server.ip
+            _server_fqdn = server.fqdn
+            _host_vars_base = {
                 'user': server.user or 'root',
                 'remote_python': server.remote_python or '/opt/anaconda/bin/python',
                 'consul_space': server.consul_space or '',
@@ -254,36 +252,6 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 'is_egress': is_egress,
             }
 
-            # 保存上传的出口机器文件到临时目录
-            egress_files_dir = os.path.join(tmpdir, 'egress_files')
-            anaconda_file_path = ''
-            if is_egress:
-                os.makedirs(egress_files_dir, exist_ok=True)
-                for f in request.FILES.getlist('egress_files'):
-                    dest = os.path.join(egress_files_dir, f.name)
-                    with open(dest, 'wb') as fp:
-                        for chunk in f.chunks():
-                            fp.write(chunk)
-
-                anaconda_file = request.FILES.get('anaconda_file')
-                if anaconda_file:
-                    anaconda_file_path = os.path.join(tmpdir, anaconda_file.name)
-                    with open(anaconda_file_path, 'wb') as fp:
-                        for chunk in anaconda_file.chunks():
-                            fp.write(chunk)
-
-            host_vars['egress_files_dir'] = egress_files_dir if is_egress else ''
-            host_vars['anaconda_file_path'] = anaconda_file_path
-
-            with open(os.path.join(host_vars_dir, 'release.yml'), 'w') as f:
-                yaml.dump(host_vars, f, allow_unicode=True)
-
-            task = ConfigDeployTask.objects.create(
-                operator=operator,
-                status='running',
-                log=f'[{datetime.now():%Y-%m-%d %H:%M:%S}] 开始初始化系统环境：{server.fqdn} ({server.ip})\n',
-            )
-
             def run():
                 # 子线程不能复用主线程的数据库连接，关闭后 Django 会自动建新连接
                 from django.db import connection as _db_conn
@@ -291,6 +259,44 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 import traceback as _tb
                 _db_conn.close()
                 try:
+                    # 临时目录、文件复制等耗时操作全在线程内完成，避免阻塞请求
+                    tmpdir = tempfile.mkdtemp(prefix='mdl_init_')
+                    for item in os.listdir(ansi_dir):
+                        src = os.path.join(ansi_dir, item)
+                        dst = os.path.join(tmpdir, item)
+                        if os.path.isdir(src):
+                            shutil.copytree(src, dst)
+                        else:
+                            shutil.copy2(src, dst)
+
+                    playbook_path = os.path.join(tmpdir, 'deploy_feeder_init.yml')
+                    hosts_path = os.path.join(tmpdir, 'hosts')
+                    host_vars_dir = os.path.join(tmpdir, 'host_vars')
+                    os.makedirs(host_vars_dir, exist_ok=True)
+
+                    with open(hosts_path, 'w') as f:
+                        f.write(f"release ansible_ssh_host={_server_ip} "
+                                f"ansible_ssh_user={ssh_user} "
+                                f"ansible_ssh_pass={ssh_pass}\n")
+
+                    host_vars = dict(_host_vars_base)
+                    egress_files_dir = os.path.join(tmpdir, 'egress_files')
+                    anaconda_file_path = ''
+                    if is_egress:
+                        os.makedirs(egress_files_dir, exist_ok=True)
+                        for fname, fdata in egress_file_data:
+                            with open(os.path.join(egress_files_dir, fname), 'wb') as fp:
+                                fp.write(fdata)
+                        if anaconda_file_data:
+                            anaconda_file_path = os.path.join(tmpdir, anaconda_file_data[0])
+                            with open(anaconda_file_path, 'wb') as fp:
+                                fp.write(anaconda_file_data[1])
+
+                    host_vars['egress_files_dir'] = egress_files_dir if is_egress else ''
+                    host_vars['anaconda_file_path'] = anaconda_file_path
+                    with open(os.path.join(host_vars_dir, 'release.yml'), 'w') as f:
+                        yaml.dump(host_vars, f, allow_unicode=True)
+
                     env = os.environ.copy()
                     env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
                     proc = _sp.run(

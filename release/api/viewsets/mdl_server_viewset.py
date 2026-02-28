@@ -156,69 +156,75 @@ class MdlServerViewSet(viewsets.ModelViewSet):
         部署版本请通过 Jira 发布流程进行。
         """
         server = self.get_object()
+        try:
+            ssh_user = (request.data.get('ssh_user') or '').strip() or server.user or 'root'
+            ssh_pass = request.data.get('ssh_pass', '').strip()
+            if not ssh_pass:
+                try:
+                    ssh_pass = Constance.get_value('ansible_ssh_pass') or ''
+                except Exception:
+                    ssh_pass = ''
 
-        ssh_user = server.user or 'root'
-        ssh_pass = request.data.get('ssh_pass', '').strip()
-        if not ssh_pass:
-            try:
-                ssh_pass = Constance.get_value('ansible_ssh_pass') or ''
-            except Exception:
-                ssh_pass = ''
+            operator = request.user.username if request.user.is_authenticated else 'unknown'
 
-        operator = request.user.username if request.user.is_authenticated else 'unknown'
+            # 写临时目录（避免与现有 ansi/mdl/hosts 并发冲突）
+            tmpdir = tempfile.mkdtemp(prefix='mdl_init_')
+            hosts_path = os.path.join(tmpdir, 'hosts')
+            host_vars_dir = os.path.join(tmpdir, 'host_vars')
+            os.makedirs(host_vars_dir)
 
-        # 写临时目录（避免与现有 ansi/mdl/hosts 并发冲突）
-        tmpdir = tempfile.mkdtemp(prefix='mdl_init_')
-        hosts_path = os.path.join(tmpdir, 'hosts')
-        host_vars_dir = os.path.join(tmpdir, 'host_vars')
-        os.makedirs(host_vars_dir)
+            with open(hosts_path, 'w') as f:
+                f.write(f"release ansible_ssh_host={server.ip} "
+                        f"ansible_ssh_user={ssh_user} "
+                        f"ansible_ssh_pass={ssh_pass}\n")
 
-        with open(hosts_path, 'w') as f:
-            f.write(f"release ansible_ssh_host={server.ip} "
-                    f"ansible_ssh_user={ssh_user} "
-                    f"ansible_ssh_pass={ssh_pass}\n")
+            host_vars = {
+                'user': server.user or 'root',
+                'remote_python': server.remote_python or '/opt/anaconda/bin/python',
+                'consul_space': server.consul_space or '',
+                'consul_token': server.consul_token or '',
+                'install_dir': server.install_dir,
+                'backups_dir': server.backups_dir,
+                'service_name': server.service_name,
+                'consul_files': server.consul_files or 'feeder_handler.cfg',
+            }
+            with open(os.path.join(host_vars_dir, 'release.yml'), 'w') as f:
+                yaml.dump(host_vars, f, allow_unicode=True)
 
-        host_vars = {
-            'user': server.user or 'root',
-            'remote_python': server.remote_python or '/opt/anaconda/bin/python',
-            'consul_space': server.consul_space or '',
-            'consul_token': server.consul_token or '',
-            'install_dir': server.install_dir,
-            'backups_dir': server.backups_dir,
-            'service_name': server.service_name,
-            'consul_files': server.consul_files or 'feeder_handler.cfg',
-        }
-        with open(os.path.join(host_vars_dir, 'release.yml'), 'w') as f:
-            yaml.dump(host_vars, f, allow_unicode=True)
-
-        task = ConfigDeployTask.objects.create(
-            operator=operator,
-            status='running',
-            log=f'[{datetime.now():%Y-%m-%d %H:%M:%S}] 开始初始化系统环境：{server.fqdn} ({server.ip})\n',
-        )
-
-        ansi_dir = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), '..', '..', 'ansi', 'mdl')
-        )
-        playbook_path = os.path.join(ansi_dir, 'deploy_feeder_init.yml')
-
-        def run():
-            out, err, rc = ansible_runner.run_command(
-                executable_cmd='ansible-playbook',
-                cmdline_args=[
-                    playbook_path,
-                    '-i', hosts_path,
-                ],
-                cwd=ansi_dir,
+            task = ConfigDeployTask.objects.create(
+                operator=operator,
+                status='running',
+                log=f'[{datetime.now():%Y-%m-%d %H:%M:%S}] 开始初始化系统环境：{server.fqdn} ({server.ip})\n',
             )
-            task.log = (task.log or '') + (out or '') + (err or '')
-            task.status = 'success' if rc == 0 else 'failed'
-            task.finished_at = datetime.now()
-            task.save()
 
-        threading.Thread(target=run, daemon=True).start()
+            ansi_dir = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), '..', '..', 'ansi', 'mdl')
+            )
+            playbook_path = os.path.join(ansi_dir, 'deploy_feeder_init.yml')
 
-        return ApiResponse(data={'task_id': task.id})
+            def run():
+                out, err, rc = ansible_runner.run_command(
+                    executable_cmd='ansible-playbook',
+                    cmdline_args=[
+                        playbook_path,
+                        '-i', hosts_path,
+                    ],
+                    cwd=ansi_dir,
+                )
+                task.log = (task.log or '') + (out or '') + (err or '')
+                task.status = 'success' if rc == 0 else 'failed'
+                task.finished_at = datetime.now()
+                task.save()
+
+            threading.Thread(target=run, daemon=True).start()
+
+            return ApiResponse(data={'task_id': task.id})
+
+        except Exception as e:
+            return Response(
+                {'code': 500, 'message': str(e), 'data': None},
+                status=drf_status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     @action(detail=True, methods=['get'], url_path='init_status')
     def init_status(self, request, pk=None):

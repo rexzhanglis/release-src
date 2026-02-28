@@ -37,6 +37,13 @@
       </el-descriptions>
 
       <el-form ref="initForm" :model="initForm" label-width="120px" size="small">
+        <el-form-item label="SSH 用户名">
+          <el-input
+            v-model="initForm.ssh_user"
+            placeholder="留空则使用服务器配置的用户名"
+            style="width:280px"
+          />
+        </el-form-item>
         <el-form-item label="SSH 密码">
           <el-input
             v-model="initForm.ssh_pass"
@@ -108,7 +115,7 @@ export default {
   },
   data() {
     return {
-      initForm: { ssh_pass: '' },
+      initForm: { ssh_user: '', ssh_pass: '' },
       starting: false,
       initStatus: '',   // '' | 'running' | 'success' | 'failed'
       deployLog: '',
@@ -121,7 +128,7 @@ export default {
       this.initStatus = ''
       this.deployLog = ''
       this.taskId = null
-      this.initForm = { ssh_pass: '' }
+      this.initForm = { ssh_user: '', ssh_pass: '' }
     },
     handleClose() {
       if (this.pollTimer) {
@@ -136,9 +143,15 @@ export default {
 
       try {
         const res = await initMdlServer(this.server.id, {
+          ssh_user: this.initForm.ssh_user || undefined,
           ssh_pass: this.initForm.ssh_pass || undefined,
         })
-        this.taskId = res.data.data.task_id
+        const respData = res.data && res.data.data
+        if (!respData || !respData.task_id) {
+          const msg = (res.data && res.data.message) || '服务器返回数据异常，请查看后端日志'
+          throw new Error(msg)
+        }
+        this.taskId = respData.task_id
 
         this.pollTimer = setInterval(async () => {
           try {

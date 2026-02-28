@@ -181,6 +181,8 @@ class MdlReleaseDetailService(ReleaseDetailService):
                                                                                        "install_dir", "backups_dir",
                                                                                        "service_name", "consul_files")
         #  2. 生成对应的文件
+        import os as _os
+        _os.makedirs(_os.path.dirname(ansible_host_vars_path), exist_ok=True)
         with open(ansible_host_vars_path, "w") as f:
             yaml.dump(data[0], f)
         # 3. 验证是否正确

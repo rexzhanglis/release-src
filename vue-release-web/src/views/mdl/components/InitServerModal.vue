@@ -224,13 +224,16 @@ export default {
         }
 
         const res = await initMdlServer(this.server.id, formData)
+        console.log('[init] res:', JSON.stringify(res))
         // request.js 拦截器已将 response.data 直接返回，res 即 {code,message,data}
         const respData = res.data
+        console.log('[init] respData:', JSON.stringify(respData))
         if (!respData || !respData.task_id) {
           const msg = (res && res.message) || '服务器返回数据异常，请查看后端日志'
           throw new Error(msg)
         }
         this.taskId = respData.task_id
+        console.log('[init] taskId:', this.taskId)
 
         this.pollTimer = setInterval(async () => {
           try {

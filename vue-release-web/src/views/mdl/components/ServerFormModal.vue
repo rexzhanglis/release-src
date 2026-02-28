@@ -14,6 +14,28 @@
       label-width="120px"
       size="small"
     >
+      <!-- ===== 复制已有服务器 ===== -->
+      <template v-if="!isEdit">
+        <el-form-item label="复制已有服务器" label-width="120px" style="margin-bottom:10px">
+          <el-select
+            v-model="cloneServerId"
+            placeholder="选择参考服务器，自动填充字段（可选）"
+            clearable
+            filterable
+            style="width:100%"
+            @change="handleClone"
+          >
+            <el-option
+              v-for="s in serverOptions"
+              :key="s.id"
+              :label="`${s.fqdn} (${s.ip})`"
+              :value="s.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-divider style="margin:4px 0 12px" />
+      </template>
+
       <!-- ===== 基础信息 ===== -->
       <el-row :gutter="16">
         <el-col :span="12">
@@ -88,6 +110,23 @@
         <el-input v-model="form.config_git_url" placeholder="可选，生产环境 Git 配置文件链接" />
       </el-form-item>
 
+      <el-form-item label="标签">
+        <el-select
+          v-model="form.label_ids"
+          multiple
+          filterable
+          placeholder="选择标签（可多选）"
+          style="width:100%"
+        >
+          <el-option
+            v-for="lbl in allLabels"
+            :key="lbl.id"
+            :label="lbl.name"
+            :value="lbl.id"
+          />
+        </el-select>
+      </el-form-item>
+
       <!-- ===== 新增时：同步创建配置实例选项 ===== -->
       <template v-if="!isEdit">
         <el-divider style="margin:14px 0 10px" />
@@ -157,7 +196,7 @@
 </template>
 
 <script>
-import { createMdlServer, updateMdlServer } from '@/api/mdlServer'
+import { createMdlServer, updateMdlServer, getMdlServers } from '@/api/mdlServer'
 
 const DEFAULT_FORM = () => ({
   fqdn: '',
@@ -172,6 +211,7 @@ const DEFAULT_FORM = () => ({
   consul_token: '',
   consul_files: 'feeder_handler.cfg',
   config_git_url: '',
+  label_ids: [],
   // 新增时额外字段
   create_config_instance: true,
   service_type_name: '',
@@ -184,6 +224,7 @@ export default {
   props: {
     value: { type: Boolean, default: false },
     server: { type: Object, default: null },
+    allLabels: { type: Array, default: () => [] },
   },
   computed: {
     dialogVisible: {
@@ -197,6 +238,8 @@ export default {
       saving: false,
       submitResult: null,
       form: DEFAULT_FORM(),
+      cloneServerId: null,
+      serverOptions: [],
       rules: {
         fqdn:         [{ required: true, message: '请填写 FQDN', trigger: 'blur' }],
         ip:           [{ required: true, message: '请填写 IP 地址', trigger: 'blur' }],
@@ -222,8 +265,36 @@ export default {
     }
   },
   methods: {
+    async fetchServerOptions() {
+      try {
+        const res = await getMdlServers({ page_size: 500 })
+        const data = res.data
+        const list = Array.isArray(data) ? data
+          : (data && Array.isArray(data.results)) ? data.results : []
+        this.serverOptions = list
+      } catch {}
+    },
+    handleClone(id) {
+      if (!id) return
+      const src = this.serverOptions.find(s => s.id === id)
+      if (!src) return
+      // 只覆盖非 FQDN/IP 的字段，FQDN 和 IP 留给用户填写
+      this.form.role_name      = src.role_name      || this.form.role_name
+      this.form.user           = src.user           || this.form.user
+      this.form.remote_python  = src.remote_python  || this.form.remote_python
+      this.form.service_name   = src.service_name   || this.form.service_name
+      this.form.install_dir    = src.install_dir    || this.form.install_dir
+      this.form.backups_dir    = src.backups_dir    || this.form.backups_dir
+      this.form.consul_space   = src.consul_space   || this.form.consul_space
+      this.form.consul_token   = src.consul_token   || this.form.consul_token
+      this.form.consul_files   = src.consul_files   || this.form.consul_files
+      this.form.config_git_url = src.config_git_url || this.form.config_git_url
+      this.form.label_ids      = (src.labels || []).map(l => l.id)
+      this.$message.info('已填充参考服务器配置，请修改 FQDN 和 IP 地址')
+    },
     handleOpen() {
       this.submitResult = null
+      this.cloneServerId = null
       if (this.isEdit) {
         const s = this.server
         this.form = {
@@ -239,6 +310,7 @@ export default {
           consul_token: s.consul_token || '',
           consul_files: s.consul_files || 'feeder_handler.cfg',
           config_git_url: s.config_git_url || '',
+          label_ids: (s.labels || []).map(l => l.id),
           create_config_instance: false,
           service_type_name: '',
           instance_name: '',
@@ -246,6 +318,7 @@ export default {
         }
       } else {
         this.form = DEFAULT_FORM()
+        this.fetchServerOptions()
       }
     },
     resetForm() {

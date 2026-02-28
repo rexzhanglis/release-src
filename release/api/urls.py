@@ -24,7 +24,7 @@ from api.viewsets.config_mgmt_viewset import (
     ConfigAuditLogViewSet,
     ConfigHistoryViewSet,
 )
-from api.viewsets.mdl_server_viewset import MdlServerViewSet
+from api.viewsets.mdl_server_viewset import MdlServerViewSet, LabelViewSet
 
 router = DefaultRouter()
 
@@ -45,6 +45,7 @@ router.register(r'config-mgmt/service-types', ServiceTypeViewSet, basename="conf
 router.register(r'config-mgmt/audit-logs', ConfigAuditLogViewSet, basename="config-audit-log")
 router.register(r'config-mgmt/history', ConfigHistoryViewSet, basename="config-history")
 router.register(r'mdl-servers', MdlServerViewSet, basename="mdl-server")
+router.register(r'mdl-labels', LabelViewSet, basename="mdl-label")
 
 urlpatterns = [
     path('', include(router.urls)),

@@ -2,7 +2,7 @@
   <el-dialog
     :visible.sync="dialogVisible"
     title="初始化服务器环境"
-    width="680px"
+    width="700px"
     :close-on-click-modal="false"
     @open="handleOpen"
     @close="handleClose"
@@ -36,7 +36,7 @@
         </el-descriptions-item>
       </el-descriptions>
 
-      <el-form ref="initForm" :model="initForm" label-width="120px" size="small">
+      <el-form ref="initForm" :model="initForm" label-width="130px" size="small">
         <el-form-item label="SSH 用户名">
           <el-input
             v-model="initForm.ssh_user"
@@ -53,6 +53,59 @@
             style="width:280px"
           />
         </el-form-item>
+
+        <el-divider style="margin:12px 0 10px" />
+
+        <!-- 出口机器选项 -->
+        <el-form-item label-width="0" style="margin-bottom:8px">
+          <el-checkbox v-model="initForm.is_egress">
+            <span style="font-weight:600">是出口机器</span>
+            <span style="color:#909399;font-size:12px;margin-left:6px">勾选后可上传出口机器所需配置文件及 Anaconda 包</span>
+          </el-checkbox>
+        </el-form-item>
+
+        <template v-if="initForm.is_egress">
+          <el-form-item label="出口配置文件">
+            <el-upload
+              ref="egressUpload"
+              action="#"
+              :auto-upload="false"
+              :multiple="true"
+              :limit="3"
+              accept=".py,.cfg,.local"
+              :on-change="handleEgressFileChange"
+              :on-remove="handleEgressFileRemove"
+              :file-list="egressFiles"
+            >
+              <el-button size="small" icon="el-icon-upload2">选择文件</el-button>
+              <div slot="tip" style="color:#909399;font-size:12px;margin-top:4px">
+                需上传以下 3 个文件：<br>
+                <span style="font-family:monospace">get_cloud_conf.py</span>、
+                <span style="font-family:monospace">users_tcp.cfg</span>、
+                <span style="font-family:monospace">users_tcp.cfg.local</span><br>
+                上传后将复制到 <span style="font-family:monospace">{{ server && server.install_dir }}</span>
+              </div>
+            </el-upload>
+          </el-form-item>
+
+          <el-form-item label="Anaconda 包">
+            <el-upload
+              ref="anacondaUpload"
+              action="#"
+              :auto-upload="false"
+              :limit="1"
+              accept=".tar,.tar.gz,.tgz"
+              :on-change="handleAnacondaFileChange"
+              :on-remove="handleAnacondaFileRemove"
+              :file-list="anacondaFiles"
+            >
+              <el-button size="small" icon="el-icon-upload2">选择文件</el-button>
+              <div slot="tip" style="color:#909399;font-size:12px;margin-top:4px">
+                上传 anaconda.tar，将解压到 /opt 目录
+              </div>
+            </el-upload>
+          </el-form-item>
+        </template>
       </el-form>
     </template>
 
@@ -115,7 +168,9 @@ export default {
   },
   data() {
     return {
-      initForm: { ssh_user: '', ssh_pass: '' },
+      initForm: { ssh_user: '', ssh_pass: '', is_egress: false },
+      egressFiles: [],
+      anacondaFiles: [],
       starting: false,
       initStatus: '',   // '' | 'running' | 'success' | 'failed'
       deployLog: '',
@@ -128,7 +183,9 @@ export default {
       this.initStatus = ''
       this.deployLog = ''
       this.taskId = null
-      this.initForm = { ssh_user: '', ssh_pass: '' }
+      this.initForm = { ssh_user: '', ssh_pass: '', is_egress: false }
+      this.egressFiles = []
+      this.anacondaFiles = []
     },
     handleClose() {
       if (this.pollTimer) {
@@ -136,16 +193,37 @@ export default {
         this.pollTimer = null
       }
     },
+    handleEgressFileChange(file, fileList) {
+      this.egressFiles = fileList
+    },
+    handleEgressFileRemove(file, fileList) {
+      this.egressFiles = fileList
+    },
+    handleAnacondaFileChange(file, fileList) {
+      this.anacondaFiles = fileList
+    },
+    handleAnacondaFileRemove(file, fileList) {
+      this.anacondaFiles = fileList
+    },
     async handleStart() {
       this.starting = true
       this.initStatus = 'running'
       this.deployLog = ''
 
       try {
-        const res = await initMdlServer(this.server.id, {
-          ssh_user: this.initForm.ssh_user || undefined,
-          ssh_pass: this.initForm.ssh_pass || undefined,
-        })
+        const formData = new FormData()
+        if (this.initForm.ssh_user) formData.append('ssh_user', this.initForm.ssh_user)
+        if (this.initForm.ssh_pass) formData.append('ssh_pass', this.initForm.ssh_pass)
+        formData.append('is_egress', this.initForm.is_egress ? '1' : '0')
+
+        if (this.initForm.is_egress) {
+          this.egressFiles.forEach(f => formData.append('egress_files', f.raw))
+          if (this.anacondaFiles.length > 0) {
+            formData.append('anaconda_file', this.anacondaFiles[0].raw)
+          }
+        }
+
+        const res = await initMdlServer(this.server.id, formData)
         const respData = res.data && res.data.data
         if (!respData || !respData.task_id) {
           const msg = (res.data && res.data.message) || '服务器返回数据异常，请查看后端日志'
@@ -156,7 +234,8 @@ export default {
         this.pollTimer = setInterval(async () => {
           try {
             const r = await getInitStatus(this.server.id, this.taskId)
-            const d = r.data.data
+            const d = r.data && r.data.data
+            if (!d) return
             this.deployLog = d.log || ''
             this.$nextTick(() => {
               if (this.$refs.logPre) {
@@ -174,11 +253,8 @@ export default {
                 this.$message.error('初始化失败，请查看日志')
               }
             }
-          } catch {
-            clearInterval(this.pollTimer)
-            this.pollTimer = null
-            this.initStatus = 'failed'
-            this.starting = false
+          } catch (pollErr) {
+            console.error('轮询状态失败:', pollErr)
           }
         }, 2000)
       } catch (e) {

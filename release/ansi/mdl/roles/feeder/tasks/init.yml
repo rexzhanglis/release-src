@@ -1,3 +1,47 @@
+# ===== 软件包 =====
+- name: 安装常用工具包
+  apt:
+    name: [lrzsz, iftop, gdb, jq, dsniff]
+    state: present
+    update_cache: yes
+  ignore_errors: true
+
+# ===== 运维用户 =====
+- name: 创建运维用户 zhixiong.zeng
+  user:
+    name: "zhixiong.zeng"
+    state: present
+    shell: /bin/bash
+    create_home: yes
+
+- name: 设置运维用户密码
+  user:
+    name: "zhixiong.zeng"
+    password: "{{ 'datayes@123' | password_hash('sha512') }}"
+
+- name: 配置运维用户 sudoers（免密）
+  copy:
+    dest: /etc/sudoers.d/zhixiong_zeng
+    content: "zhixiong.zeng ALL=(ALL:ALL) NOPASSWD:ALL\n"
+    mode: '0440'
+    validate: 'visudo -cf %s'
+
+# ===== 系统 limits =====
+- name: 配置 limits.conf（root hard core unlimited）
+  lineinfile:
+    path: /etc/security/limits.conf
+    line: "root hard core unlimited"
+    regexp: "^root\\s+hard\\s+core"
+    state: present
+
+- name: 配置 limits.conf（* soft core unlimited）
+  lineinfile:
+    path: /etc/security/limits.conf
+    line: "* soft core unlimited"
+    regexp: "^\\*\\s+soft\\s+core"
+    state: present
+
+# ===== 目录结构 =====
 - name: 创建安装目录
   file:
     path: "{{ install_dir }}"
@@ -22,16 +66,17 @@
     group: "{{ user }}"
     mode: '0755'
 
-- name: 创建 coredump 目录 /var/crash
+- name: 创建 coredump 目录 /datayes/corefiles
   file:
-    path: /var/crash
+    path: /datayes/corefiles
     state: directory
     mode: '0777'
 
+# ===== Coredump =====
 - name: 配置 coredump（/etc/sysctl.conf）
   lineinfile:
     path: /etc/sysctl.conf
-    line: "kernel.core_pattern=/var/crash/core.%t.%e.%p"
+    line: "kernel.core_pattern=/datayes/corefiles/core.%t.%e.%p"
     regexp: "^kernel.core_pattern"
     state: present
 
@@ -39,6 +84,22 @@
   command: sysctl -p
   ignore_errors: true
 
+# ===== DNS =====
+- name: 配置 DNS（/etc/systemd/resolved.conf）
+  ini_file:
+    path: /etc/systemd/resolved.conf
+    section: Resolve
+    option: DNS
+    value: "10.22.117.2 10.22.117.3"
+    no_extra_spaces: yes
+
+- name: 重启 systemd-resolved 使 DNS 生效
+  systemd:
+    name: systemd-resolved
+    state: restarted
+  ignore_errors: true
+
+# ===== Systemd 服务 =====
 - name: 部署 systemd service 文件
   template:
     src: "{{ role_path }}/templates/mdl-forward.service.j2"
@@ -52,3 +113,36 @@
     name: "{{ service_name }}"
     enabled: yes
     daemon_reload: yes
+
+# ===== 出口机器额外步骤 =====
+- name: 上传出口机器配置文件到安装目录
+  when: is_egress | default(false) | bool and egress_files_dir != ''
+  copy:
+    src: "{{ egress_files_dir }}/"
+    dest: "{{ install_dir }}/"
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: '0644'
+
+- name: 添加 cron 任务（每 10 分钟拉取云配置）
+  when: is_egress | default(false) | bool
+  cron:
+    name: "get_cloud_conf"
+    job: "cd {{ install_dir }} && python get_cloud_conf.py"
+    minute: "*/10"
+    state: present
+
+- name: 上传 Anaconda 包到 /opt
+  when: is_egress | default(false) | bool and anaconda_file_path != ''
+  copy:
+    src: "{{ anaconda_file_path }}"
+    dest: "/opt/{{ anaconda_file_path | basename }}"
+    mode: '0644'
+
+- name: 解压 Anaconda 包到 /opt
+  when: is_egress | default(false) | bool and anaconda_file_path != ''
+  unarchive:
+    src: "/opt/{{ anaconda_file_path | basename }}"
+    dest: /opt
+    remote_src: yes
+    creates: /opt/anaconda

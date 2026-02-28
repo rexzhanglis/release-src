@@ -32,12 +32,35 @@ except ImportError:
 
     ansible_runner = AnsibleRunnerMock()
 
-from mdl.models import MdlServer, ConfigDeployTask, ServiceType, ConfigInstance, ConfigFile
+from mdl.models import MdlServer, ConfigDeployTask, ServiceType, ConfigInstance, ConfigFile, Label
 from const.models import Constance
 from common.utils.apiutil import ApiResponse
 
 
+class LabelSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Label
+        fields = ['id', 'name']
+
+
+class LabelViewSet(viewsets.ModelViewSet):
+    queryset = Label.objects.all().order_by('name')
+    serializer_class = LabelSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        q = self.request.query_params.get('q', '').strip()
+        if q:
+            qs = qs.filter(name__icontains=q)
+        return qs
+
+
 class MdlServerSerializer(serializers.ModelSerializer):
+    labels = LabelSerializer(source='label_set', many=True, read_only=True)
+    label_ids = serializers.ListField(
+        child=serializers.IntegerField(), write_only=True, required=False, default=list
+    )
+
     class Meta:
         model = MdlServer
         fields = [
@@ -46,8 +69,29 @@ class MdlServerSerializer(serializers.ModelSerializer):
             'consul_space', 'consul_token', 'consul_files',
             'config_git_url', 'is_consistent', 'check_detail',
             'created_time', 'last_updated_time',
+            'labels', 'label_ids',
         ]
         read_only_fields = ['id', 'created_time', 'last_updated_time']
+
+    def _sync_labels(self, instance, label_ids):
+        # 移除旧关联，添加新关联（从 Label 端操作 M2M）
+        for label in Label.objects.filter(mdl_server=instance).exclude(id__in=label_ids):
+            label.mdl_server.remove(instance)
+        for label in Label.objects.filter(id__in=label_ids):
+            label.mdl_server.add(instance)
+
+    def create(self, validated_data):
+        label_ids = validated_data.pop('label_ids', [])
+        instance = super().create(validated_data)
+        self._sync_labels(instance, label_ids)
+        return instance
+
+    def update(self, instance, validated_data):
+        label_ids = validated_data.pop('label_ids', None)
+        instance = super().update(instance, validated_data)
+        if label_ids is not None:
+            self._sync_labels(instance, label_ids)
+        return instance
 
 
 class MdlServerViewSet(viewsets.ModelViewSet):
@@ -57,9 +101,12 @@ class MdlServerViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = super().get_queryset()
         q = self.request.query_params.get('q', '').strip()
+        label_id = self.request.query_params.get('label_id', '').strip()
         if q:
             from django.db.models import Q
             qs = qs.filter(Q(fqdn__icontains=q) | Q(ip__icontains=q) | Q(service_name__icontains=q))
+        if label_id:
+            qs = qs.filter(label__id=label_id)
         return qs
 
     def create(self, request, *args, **kwargs):
@@ -153,6 +200,7 @@ class MdlServerViewSet(viewsets.ModelViewSet):
         """
         系统环境初始化（不部署二进制包）：
         创建目录结构 + 配置 systemd service + 配置 coredump
+        出口机器额外支持上传文件：egress_files（配置文件）、anaconda_file（Anaconda 包）
         部署版本请通过 Jira 发布流程进行。
         """
         server = self.get_object()
@@ -165,6 +213,7 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 except Exception:
                     ssh_pass = ''
 
+            is_egress = request.data.get('is_egress', '0') in ('1', 'true', True)
             operator = request.user.username if request.user.is_authenticated else 'unknown'
 
             # 写临时目录（避免与现有 ansi/mdl/hosts 并发冲突）
@@ -187,7 +236,30 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 'backups_dir': server.backups_dir,
                 'service_name': server.service_name,
                 'consul_files': server.consul_files or 'feeder_handler.cfg',
+                'is_egress': is_egress,
             }
+
+            # 保存上传的出口机器文件到临时目录
+            egress_files_dir = os.path.join(tmpdir, 'egress_files')
+            anaconda_file_path = ''
+            if is_egress:
+                os.makedirs(egress_files_dir, exist_ok=True)
+                for f in request.FILES.getlist('egress_files'):
+                    dest = os.path.join(egress_files_dir, f.name)
+                    with open(dest, 'wb') as fp:
+                        for chunk in f.chunks():
+                            fp.write(chunk)
+
+                anaconda_file = request.FILES.get('anaconda_file')
+                if anaconda_file:
+                    anaconda_file_path = os.path.join(tmpdir, anaconda_file.name)
+                    with open(anaconda_file_path, 'wb') as fp:
+                        for chunk in anaconda_file.chunks():
+                            fp.write(chunk)
+
+            host_vars['egress_files_dir'] = egress_files_dir if is_egress else ''
+            host_vars['anaconda_file_path'] = anaconda_file_path
+
             with open(os.path.join(host_vars_dir, 'release.yml'), 'w') as f:
                 yaml.dump(host_vars, f, allow_unicode=True)
 

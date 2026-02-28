@@ -17,9 +17,27 @@ export function deleteMdlServer(id) {
 }
 
 export function initMdlServer(id, data) {
-  return request({ url: `/mdl-servers/${id}/init/`, method: 'post', data })
+  const isFormData = data instanceof FormData
+  return request({
+    url: `/mdl-servers/${id}/init/`,
+    method: 'post',
+    data,
+    headers: isFormData ? { 'Content-Type': 'multipart/form-data' } : {},
+  })
 }
 
 export function getInitStatus(id, taskId) {
   return request({ url: `/mdl-servers/${id}/init_status/`, method: 'get', params: { task_id: taskId } })
+}
+
+export function getLabels(params) {
+  return request({ url: '/mdl-labels/', method: 'get', params })
+}
+
+export function createLabel(data) {
+  return request({ url: '/mdl-labels/', method: 'post', data })
+}
+
+export function deleteLabel(id) {
+  return request({ url: `/mdl-labels/${id}/`, method: 'delete' })
 }

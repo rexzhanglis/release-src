@@ -109,7 +109,7 @@
       </el-form>
     </template>
 
-    <!-- 阶段2：执行+日志 -->
+    <!-- 阶段2：执行+进度+日志 -->
     <template v-else>
       <div v-if="initStatus === 'running'" class="status-row">
         <i class="el-icon-loading" style="font-size:24px;color:#409eff"></i>
@@ -127,6 +127,20 @@
       <div v-else-if="initStatus === 'failed'" class="status-row fail">
         <i class="el-icon-circle-close" style="font-size:32px"></i>
         <span style="margin-left:10px">初始化失败，请查看下方日志</span>
+      </div>
+
+      <!-- 进度条 -->
+      <div v-if="initStatus === 'running' || initStatus === 'success'" class="progress-container">
+        <el-progress
+          :percentage="initProgress"
+          :status="initStatus === 'success' ? 'success' : ''"
+          :stroke-width="10"
+          :show-text="true"
+        />
+        <div v-if="currentStep" class="current-step">
+          <i class="el-icon-loading" v-if="initStatus === 'running'"></i>
+          {{ currentStep }}
+        </div>
       </div>
 
       <el-divider content-position="left" style="margin:12px 0 8px">
@@ -154,6 +168,20 @@
 <script>
 import { initMdlServer, getInitStatus } from '@/api/mdlServer'
 
+// Ansible 初始化步骤，与 init.yml 的 task 名称对应
+const INIT_STEPS = [
+  '安装系统工具包',
+  '创建运维用户',
+  '配置sudoers',
+  '设置limits.conf',
+  '创建目录结构',
+  '配置coredump',
+  '配置DNS',
+  '部署systemd服务',
+  '配置出口机器',
+  '安装Anaconda',
+]
+
 export default {
   name: 'InitServerModal',
   props: {
@@ -176,6 +204,8 @@ export default {
       deployLog: '',
       taskId: null,
       pollTimer: null,
+      initProgress: 0,
+      currentStep: '',
     }
   },
   methods: {
@@ -183,6 +213,8 @@ export default {
       this.initStatus = ''
       this.deployLog = ''
       this.taskId = null
+      this.initProgress = 0
+      this.currentStep = ''
       this.initForm = { ssh_user: '', ssh_pass: '', is_egress: false }
       this.egressFiles = []
       this.anacondaFiles = []
@@ -205,10 +237,38 @@ export default {
     handleAnacondaFileRemove(file, fileList) {
       this.anacondaFiles = fileList
     },
+    // 从日志中解析当前执行到哪个步骤，更新进度条
+    updateProgress(log) {
+      if (!log) return
+      // 匹配 Ansible 输出的 TASK [xxx] 行
+      const taskMatches = log.match(/TASK \[([^\]]+)\]/g) || []
+      let maxIdx = -1
+      let matchedStep = ''
+      taskMatches.forEach(taskStr => {
+        const taskName = taskStr.replace(/TASK \[/, '').replace(/\]$/, '').trim()
+        INIT_STEPS.forEach((step, idx) => {
+          if (taskName.includes(step) && idx > maxIdx) {
+            maxIdx = idx
+            matchedStep = step
+          }
+        })
+      })
+      if (maxIdx >= 0) {
+        this.currentStep = matchedStep
+        // 进度：当前步骤 / 总步骤 * 90（留 10% 给最终保存）
+        this.initProgress = Math.min(Math.round((maxIdx + 1) / INIT_STEPS.length * 90), 90)
+      } else if (log.includes('PLAY [')) {
+        // 已开始但还没匹配到具体步骤
+        this.initProgress = 5
+        this.currentStep = '连接目标服务器...'
+      }
+    },
     async handleStart() {
       this.starting = true
       this.initStatus = 'running'
       this.deployLog = ''
+      this.initProgress = 0
+      this.currentStep = '准备初始化...'
 
       try {
         const formData = new FormData()
@@ -224,16 +284,13 @@ export default {
         }
 
         const res = await initMdlServer(this.server.id, formData)
-        console.log('[init] res:', JSON.stringify(res))
         // request.js 拦截器已将 response.data 直接返回，res 即 {code,message,data}
         const respData = res.data
-        console.log('[init] respData:', JSON.stringify(respData))
         if (!respData || !respData.task_id) {
           const msg = (res && res.message) || '服务器返回数据异常，请查看后端日志'
           throw new Error(msg)
         }
         this.taskId = respData.task_id
-        console.log('[init] taskId:', this.taskId)
 
         this.pollTimer = setInterval(async () => {
           try {
@@ -241,6 +298,7 @@ export default {
             const d = r.data
             if (!d) return
             this.deployLog = d.log || ''
+            this.updateProgress(this.deployLog)
             this.$nextTick(() => {
               if (this.$refs.logPre) {
                 this.$refs.logPre.scrollTop = this.$refs.logPre.scrollHeight
@@ -252,6 +310,8 @@ export default {
               this.initStatus = d.status
               this.starting = false
               if (d.status === 'success') {
+                this.initProgress = 100
+                this.currentStep = '初始化完成'
                 this.$message.success('系统环境初始化成功，请通过 Jira 发布流程部署版本')
               } else {
                 this.$message.error('初始化失败，请查看日志')
@@ -282,13 +342,26 @@ export default {
 .status-row.success { color: #67c23a; }
 .status-row.fail    { color: #f56c6c; }
 
+.progress-container {
+  margin: 8px 0 4px;
+}
+.current-step {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #909399;
+}
+.current-step .el-icon-loading {
+  margin-right: 4px;
+  color: #409eff;
+}
+
 .init-log {
   background: #1e1e1e;
   color: #d4d4d4;
   padding: 12px;
   border-radius: 4px;
   font-size: 12px;
-  max-height: 360px;
+  max-height: 300px;
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-all;

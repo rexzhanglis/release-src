@@ -302,7 +302,8 @@ export default {
     async handleSave() {
       try {
         const content = JSON.parse(this.editorContent)
-        await updateConfig(this.currentConfig.id, { content })
+        // 同时传 raw_content，让后端保留编辑器原始格式（缩进、换行）
+        await updateConfig(this.currentConfig.id, { content, raw_content: this.editorContent })
         this.$message.success('保存成功')
         this.isDirty = false
       } catch (e) {

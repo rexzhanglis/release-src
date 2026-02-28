@@ -227,17 +227,19 @@ def _deep_merge_schema(target, source):
 
 
 def _get_commit_content(config):
-    """获取提交用的文件内容"""
+    """获取提交用的文件内容，优先使用 raw_content 保留原始格式"""
     raw = config.raw_content
     if raw:
         try:
             raw_normalized = json.dumps(json.loads(raw), sort_keys=True, ensure_ascii=False)
             cur_normalized = json.dumps(config.content, sort_keys=True, ensure_ascii=False)
             if raw_normalized == cur_normalized:
+                # 内容未变，直接用原始文本（保留格式）
                 return raw
         except (json.JSONDecodeError, ValueError, TypeError):
             pass
-    return json.dumps(config.content, ensure_ascii=False)
+    # raw_content 不存在或内容已变但未同步 raw，fallback 用 indent=2 保持可读
+    return json.dumps(config.content, indent=2, ensure_ascii=False)
 
 
 # ===================================================================
@@ -722,7 +724,13 @@ class ConfigFileViewSet(viewsets.ModelViewSet):
         if content is not None:
             _snapshot(request, instance, action='save')   # 先快照旧值
             instance.content = content
-            instance.save(update_fields=['content'])
+            # 同步保存原始文本，保留编辑器里的格式（缩进、换行等）
+            raw_content = request.data.get('raw_content')
+            if raw_content:
+                instance.raw_content = raw_content
+                instance.save(update_fields=['content', 'raw_content'])
+            else:
+                instance.save(update_fields=['content'])
         _audit(request, 'save',
                instance_names=[instance.instance.name],
                filename=instance.filename,

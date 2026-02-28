@@ -196,7 +196,7 @@
 </template>
 
 <script>
-import { createMdlServer, updateMdlServer, getMdlServers } from '@/api/mdlServer'
+import { createMdlServer, updateMdlServer, getMdlServer, getMdlServers } from '@/api/mdlServer'
 
 const DEFAULT_FORM = () => ({
   fqdn: '',
@@ -292,11 +292,16 @@ export default {
       this.form.label_ids      = (src.labels || []).map(l => l.id)
       this.$message.info('已填充参考服务器配置，请修改 FQDN 和 IP 地址')
     },
-    handleOpen() {
+    async handleOpen() {
       this.submitResult = null
       this.cloneServerId = null
       if (this.isEdit) {
-        const s = this.server
+        // 调详情接口确保拿到所有字段（列表接口可能省略部分字段）
+        let s = this.server
+        try {
+          const res = await getMdlServer(this.server.id)
+          s = (res.data && res.data.data) || (res.data) || this.server
+        } catch {}
         this.form = {
           fqdn: s.fqdn || '',
           ip: s.ip || '',

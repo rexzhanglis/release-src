@@ -8,6 +8,10 @@ export function createMdlServer(data) {
   return request({ url: '/mdl-servers/', method: 'post', data })
 }
 
+export function getMdlServer(id) {
+  return request({ url: `/mdl-servers/${id}/`, method: 'get' })
+}
+
 export function updateMdlServer(id, data) {
   return request({ url: `/mdl-servers/${id}/`, method: 'put', data })
 }

@@ -1,8 +1,0 @@
-backups_dir: /datayes/app/backups
-consul_files: feeder_handler.cfg
-consul_space: ''
-consul_token: dbb8cd09-96db-36f8-fcba-a3f84e496241
-install_dir: /datayes/app/bin
-remote_python: /usr/bin/python3
-service_name: mdl-forward
-user: root

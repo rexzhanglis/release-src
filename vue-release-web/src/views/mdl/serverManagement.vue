@@ -73,16 +73,17 @@
     <!-- 表格 -->
     <el-table
       v-loading="loading"
-      :data="servers"
+      :data="sortedServers"
       border
       size="small"
       style="width:100%;margin-top:12px"
       @selection-change="handleSelectionChange"
+      @sort-change="handleSortChange"
     >
       <el-table-column type="selection" width="40" />
-      <el-table-column prop="fqdn" label="FQDN" min-width="160" show-overflow-tooltip />
-      <el-table-column prop="ip" label="IP 地址" width="140" />
-      <el-table-column prop="service_name" label="服务名" width="140" />
+      <el-table-column prop="fqdn" label="FQDN" min-width="160" show-overflow-tooltip sortable="custom" />
+      <el-table-column prop="ip" label="IP 地址" width="140" sortable="custom" />
+      <el-table-column prop="service_name" label="服务名" width="140" sortable="custom" />
       <el-table-column label="标签" width="160">
         <template slot-scope="{ row }">
           <el-tag
@@ -93,17 +94,17 @@
           >{{ lbl.name }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="install_dir" label="安装目录" min-width="160" show-overflow-tooltip>
+      <el-table-column prop="install_dir" label="安装目录" min-width="160" show-overflow-tooltip sortable="custom">
         <template slot-scope="{ row }">
           <span class="mono">{{ row.install_dir }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="backups_dir" label="备份目录" min-width="140" show-overflow-tooltip>
+      <el-table-column prop="backups_dir" label="备份目录" min-width="140" show-overflow-tooltip sortable="custom">
         <template slot-scope="{ row }">
           <span class="mono">{{ row.backups_dir }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="remote_python" label="Python 路径" width="180" show-overflow-tooltip>
+      <el-table-column prop="remote_python" label="Python 路径" width="180" show-overflow-tooltip sortable="custom">
         <template slot-scope="{ row }">
           <span class="mono">{{ row.remote_python }}</span>
         </template>
@@ -225,6 +226,18 @@ import BatchInitModal from './components/BatchInitModal'
 export default {
   name: 'ServerManagement',
   components: { ServerFormModal, InitServerModal, BatchAddModal, BatchInitModal },
+  computed: {
+    sortedServers() {
+      if (!this.sortProp || !this.sortOrder) return this.servers
+      const prop = this.sortProp
+      const asc = this.sortOrder === 'ascending'
+      return [...this.servers].sort((a, b) => {
+        const av = (a[prop] || '').toString()
+        const bv = (b[prop] || '').toString()
+        return asc ? av.localeCompare(bv) : bv.localeCompare(av)
+      })
+    },
+  },
   data() {
     return {
       loading: false,
@@ -242,6 +255,8 @@ export default {
       showBatchInit: false,
       selectedRows: [],
       currentServer: null,
+      sortProp: '',
+      sortOrder: '',
       allLabels: [],
       newLabelName: '',
     }
@@ -306,6 +321,10 @@ export default {
       this.fetchServers()
     },
 
+    handleSortChange({ prop, order }) {
+      this.sortProp = prop || ''
+      this.sortOrder = order || ''
+    },
     handleSelectionChange(rows) {
       this.selectedRows = rows
     },

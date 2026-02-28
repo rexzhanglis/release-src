@@ -275,18 +275,31 @@ class MdlServerViewSet(viewsets.ModelViewSet):
             playbook_path = os.path.join(ansi_dir, 'deploy_feeder_init.yml')
 
             def run():
-                out, err, rc = ansible_runner.run_command(
-                    executable_cmd='ansible-playbook',
-                    cmdline_args=[
-                        playbook_path,
-                        '-i', hosts_path,
-                    ],
-                    cwd=ansi_dir,
-                )
-                task.log = (task.log or '') + (out or '') + (err or '')
-                task.status = 'success' if rc == 0 else 'failed'
-                task.finished_at = datetime.now()
-                task.save()
+                try:
+                    out, err, rc = ansible_runner.run_command(
+                        executable_cmd='ansible-playbook',
+                        cmdline_args=[
+                            playbook_path,
+                            '-i', hosts_path,
+                            '-v',
+                        ],
+                        cwd=ansi_dir,
+                    )
+                    combined = ''
+                    if out:
+                        combined += out
+                    if err:
+                        combined += '\n[stderr]\n' + err
+                    task.refresh_from_db()
+                    task.log = (task.log or '') + combined
+                    task.status = 'success' if rc == 0 else 'failed'
+                except Exception as ex:
+                    task.refresh_from_db()
+                    task.log = (task.log or '') + f'\n[错误] {ex}'
+                    task.status = 'failed'
+                finally:
+                    task.finished_at = datetime.now()
+                    task.save()
 
             threading.Thread(target=run, daemon=True).start()
 

@@ -45,9 +45,9 @@ class MdlServerSerializer(serializers.ModelSerializer):
             'service_name', 'install_dir', 'backups_dir',
             'consul_space', 'consul_token', 'consul_files',
             'config_git_url', 'is_consistent', 'check_detail',
-            'created_time', 'updated_time',
+            'created_time', 'last_updated_time',
         ]
-        read_only_fields = ['id', 'created_time', 'updated_time']
+        read_only_fields = ['id', 'created_time', 'last_updated_time']
 
 
 class MdlServerViewSet(viewsets.ModelViewSet):

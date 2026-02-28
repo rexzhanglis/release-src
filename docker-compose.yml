@@ -63,15 +63,5 @@ services:
   #   volumes:
   #     - db_data:/var/lib/mysql
 
-  # 模拟目标主机 (用于 Ansible 部署测试)
-  target-host:
-    image: paramiko/sshd:latest  # 一个带有 SSH 服务的镜像，或者使用 ubuntu + ssh server
-    container_name: target-host
-    restart: always
-    environment:
-      - SSH_USERS=root:root:1000  # 用户名:密码:UID
-    ports:
-      - "2222:22"
-
 volumes:
   db_data:

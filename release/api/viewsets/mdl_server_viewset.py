@@ -287,6 +287,9 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 from django.db import connection as _db_conn
                 _db_conn.close()
                 try:
+                    env = os.environ.copy()
+                    env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
+                    env['ANSIBLE_CONFIG'] = os.path.join(tmpdir, 'ansible.cfg')
                     out, err, rc = ansible_runner.run_command(
                         executable_cmd='ansible-playbook',
                         cmdline_args=[
@@ -295,6 +298,7 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                             '-v',
                         ],
                         cwd=tmpdir,
+                        envvars=env,
                     )
                     combined = ''
                     if out:

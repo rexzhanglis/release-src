@@ -1,0 +1,11 @@
+- name: 初始化服务器系统环境（不部署二进制包）
+  hosts: 'all'
+  vars:
+    is_new_deploy: true
+    start_after_deploy: false
+  tasks:
+    - name: 初始化系统
+      include_role:
+        name: feeder
+        tasks_from: init
+      become: true

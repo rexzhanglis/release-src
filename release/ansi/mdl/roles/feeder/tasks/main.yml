@@ -1,5 +1,10 @@
 - debug: msg="deploying feeder_handler {{ version }}"
 
+- name: 初始化系统（全新部署时执行）
+  when: is_new_deploy | default(false) | bool
+  include: tasks/init.yml
+  become: true
+
 - name: check python
   include: tasks/check_python.yml
   become: true

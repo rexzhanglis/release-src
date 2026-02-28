@@ -1,0 +1,54 @@
+- name: 创建安装目录
+  file:
+    path: "{{ install_dir }}"
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: '0755'
+
+- name: 创建备份目录
+  file:
+    path: "{{ backups_dir }}"
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: '0755'
+
+- name: 创建日志目录
+  file:
+    path: "{{ install_dir | dirname }}/logs"
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: '0755'
+
+- name: 创建 coredump 目录 /var/crash
+  file:
+    path: /var/crash
+    state: directory
+    mode: '0777'
+
+- name: 配置 coredump（/etc/sysctl.conf）
+  lineinfile:
+    path: /etc/sysctl.conf
+    line: "kernel.core_pattern=/var/crash/core.%t.%e.%p"
+    regexp: "^kernel.core_pattern"
+    state: present
+
+- name: sysctl -p 使 coredump 配置生效
+  command: sysctl -p
+  ignore_errors: true
+
+- name: 部署 systemd service 文件
+  template:
+    src: "{{ role_path }}/templates/mdl-forward.service.j2"
+    dest: "/lib/systemd/system/{{ service_name }}.service"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: systemctl daemon-reload 并启用服务开机自启
+  systemd:
+    name: "{{ service_name }}"
+    enabled: yes
+    daemon_reload: yes

@@ -216,6 +216,11 @@ class MdlServerViewSet(viewsets.ModelViewSet):
             is_egress = request.data.get('is_egress', '0') in ('1', 'true', True)
             operator = request.user.username if request.user.is_authenticated else 'unknown'
 
+            ansi_dir = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), '..', '..', 'ansi', 'mdl')
+            )
+            playbook_path = os.path.join(ansi_dir, 'deploy_feeder_init.yml')
+
             # 写临时目录（避免与现有 ansi/mdl/hosts 并发冲突）
             tmpdir = tempfile.mkdtemp(prefix='mdl_init_')
             hosts_path = os.path.join(tmpdir, 'hosts')
@@ -263,18 +268,20 @@ class MdlServerViewSet(viewsets.ModelViewSet):
             with open(os.path.join(host_vars_dir, 'release.yml'), 'w') as f:
                 yaml.dump(host_vars, f, allow_unicode=True)
 
+            # 写 ansible.cfg，让 Ansible 知道去 ansi_dir 找 roles
+            with open(os.path.join(tmpdir, 'ansible.cfg'), 'w') as f:
+                f.write(f'[defaults]\nroles_path = {ansi_dir}/roles\n')
+
             task = ConfigDeployTask.objects.create(
                 operator=operator,
                 status='running',
                 log=f'[{datetime.now():%Y-%m-%d %H:%M:%S}] 开始初始化系统环境：{server.fqdn} ({server.ip})\n',
             )
 
-            ansi_dir = os.path.abspath(
-                os.path.join(os.path.dirname(__file__), '..', '..', 'ansi', 'mdl')
-            )
-            playbook_path = os.path.join(ansi_dir, 'deploy_feeder_init.yml')
-
             def run():
+                # 子线程不能复用主线程的数据库连接，关闭后 Django 会自动建新连接
+                from django.db import connection as _db_conn
+                _db_conn.close()
                 try:
                     out, err, rc = ansible_runner.run_command(
                         executable_cmd='ansible-playbook',
@@ -283,7 +290,7 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                             '-i', hosts_path,
                             '-v',
                         ],
-                        cwd=ansi_dir,
+                        cwd=tmpdir,
                     )
                     combined = ''
                     if out:
@@ -294,7 +301,6 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                     task.log = (task.log or '') + combined
                     task.status = 'success' if rc == 0 else 'failed'
                 except Exception as ex:
-                    task.refresh_from_db()
                     task.log = (task.log or '') + f'\n[错误] {ex}'
                     task.status = 'failed'
                 finally:

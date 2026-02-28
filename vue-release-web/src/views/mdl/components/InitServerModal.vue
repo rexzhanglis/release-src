@@ -126,13 +126,13 @@
       </div>
       <div v-else-if="initStatus === 'failed'" class="status-row fail">
         <i class="el-icon-circle-close" style="font-size:32px"></i>
-        <span style="margin-left:10px">初始化失败，请查看日志</span>
+        <span style="margin-left:10px">初始化失败，请查看下方日志</span>
       </div>
 
       <el-divider content-position="left" style="margin:12px 0 8px">
         <i class="el-icon-tickets"></i> 执行日志
       </el-divider>
-      <pre ref="logPre" class="init-log">{{ deployLog || '等待输出...' }}</pre>
+      <pre ref="logPre" class="init-log" :class="{ 'init-log-error': initStatus === 'failed' && deployLog }">{{ deployLog || (initStatus === 'failed' ? '日志为空，请检查后端服务日志' : '等待输出...') }}</pre>
     </template>
 
     <div slot="footer">
@@ -289,6 +289,10 @@ export default {
   white-space: pre-wrap;
   word-break: break-all;
   font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.init-log-error {
+  border-left: 3px solid #f56c6c;
 }
 
 .mono {

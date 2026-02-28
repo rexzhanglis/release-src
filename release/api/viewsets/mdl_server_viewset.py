@@ -290,16 +290,25 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                     env = os.environ.copy()
                     env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
                     env['ANSIBLE_CONFIG'] = os.path.join(tmpdir, 'ansible.cfg')
-                    out, err, rc = ansible_runner.run_command(
-                        executable_cmd='ansible-playbook',
-                        cmdline_args=[
-                            playbook_path,
-                            '-i', hosts_path,
-                            '-v',
-                        ],
-                        cwd=tmpdir,
-                        envvars=env,
-                    )
+                    try:
+                        out, err, rc = ansible_runner.run_command(
+                            executable_cmd='ansible-playbook',
+                            cmdline_args=[
+                                playbook_path,
+                                '-i', hosts_path,
+                                '-v',
+                            ],
+                            cwd=tmpdir,
+                            envvars=env,
+                        )
+                    except TypeError:
+                        # 部分版本 ansible_runner 不支持 envvars，回退到 subprocess
+                        import subprocess as _sp
+                        res = _sp.run(
+                            ['ansible-playbook', playbook_path, '-i', hosts_path, '-v'],
+                            capture_output=True, text=True, env=env, cwd=tmpdir,
+                        )
+                        out, err, rc = res.stdout, res.stderr, res.returncode
                     combined = ''
                     if out:
                         combined += out

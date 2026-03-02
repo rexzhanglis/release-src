@@ -181,9 +181,9 @@ export default {
           formData.append('is_egress', '0')
 
           const res = await initMdlServer(row.id, formData)
-          const respData = res.data && res.data.data
+          const respData = res.data
           if (!respData || !respData.task_id) {
-            const msg = (res.data && res.data.message) || '服务器返回数据异常'
+            const msg = res.message || '服务器返回数据异常'
             throw new Error(msg)
           }
 

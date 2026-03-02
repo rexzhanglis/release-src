@@ -216,7 +216,13 @@ export default {
     }
   },
   created() {
-    this.fetchTree()
+    const ip = this.$route.query.ip
+    if (ip) {
+      this.searchText = ip
+      this.fetchTree(ip)
+    } else {
+      this.fetchTree()
+    }
   },
   methods: {
     // 统一提取后端错误信息

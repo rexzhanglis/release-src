@@ -316,6 +316,7 @@ export default {
               } else {
                 this.$message.error('初始化失败，请查看日志')
               }
+              this.$emit('done', d.status)
             }
           } catch (pollErr) {
             console.error('轮询状态失败:', pollErr)

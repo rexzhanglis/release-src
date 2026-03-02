@@ -186,6 +186,12 @@
     <div slot="footer">
       <el-button @click="dialogVisible = false">{{ submitResult ? '关闭' : '取消' }}</el-button>
       <el-button
+        v-if="submitResult && createdServer"
+        type="warning"
+        icon="el-icon-s-tools"
+        @click="handleInitNow"
+      >立即初始化</el-button>
+      <el-button
         v-if="!submitResult"
         type="primary"
         :loading="saving"
@@ -237,6 +243,7 @@ export default {
     return {
       saving: false,
       submitResult: null,
+      createdServer: null,
       form: DEFAULT_FORM(),
       cloneServerId: null,
       serverOptions: [],
@@ -294,6 +301,7 @@ export default {
     },
     async handleOpen() {
       this.submitResult = null
+      this.createdServer = null
       this.cloneServerId = null
       if (this.isEdit) {
         // 调详情接口确保拿到所有字段（列表接口可能省略部分字段）
@@ -341,6 +349,11 @@ export default {
         this.form.service_type_name = this.form.role_name
       }
     },
+    handleInitNow() {
+      this.$emit('init-after-create', this.createdServer)
+      this.dialogVisible = false
+    },
+
     async handleSubmit() {
       try {
         await this.$refs.form.validate()
@@ -384,6 +397,7 @@ export default {
             title: hasError ? '服务器已新增，但部分步骤失败' : '新增成功',
             details,
           }
+          this.createdServer = data.server || null
           this.$emit('success')
         }
       } catch (e) {

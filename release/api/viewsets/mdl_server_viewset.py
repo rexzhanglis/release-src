@@ -69,10 +69,11 @@ class MdlServerSerializer(serializers.ModelSerializer):
             'service_name', 'install_dir', 'backups_dir',
             'consul_space', 'consul_token', 'consul_files',
             'config_git_url', 'is_consistent', 'check_detail',
+            'init_status',
             'created_time', 'last_updated_time',
             'labels', 'label_ids',
         ]
-        read_only_fields = ['id', 'created_time', 'last_updated_time']
+        read_only_fields = ['id', 'init_status', 'created_time', 'last_updated_time']
 
     def _sync_labels(self, instance, label_ids):
         # 移除旧关联，添加新关联（从 Label 端操作 M2M）
@@ -237,7 +238,12 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 log=f'[{datetime.now():%Y-%m-%d %H:%M:%S}] 开始初始化系统环境：{server.fqdn} ({server.ip})\n',
             )
 
+            # 立即将服务器状态置为初始化中
+            server.init_status = 'initializing'
+            server.save(update_fields=['init_status'])
+
             # 捕获所有需要的变量，避免闭包引用 request
+            _server_id = server.id
             _server_ip = server.ip
             _server_fqdn = server.fqdn
             _host_vars_base = {
@@ -313,6 +319,13 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 finally:
                     task.finished_at = datetime.now()
                     task.save()
+                    # 回写服务器 init_status
+                    try:
+                        _srv = MdlServer.objects.get(id=_server_id)
+                        _srv.init_status = 'ready' if task.status == 'success' else 'failed'
+                        _srv.save(update_fields=['init_status'])
+                    except Exception:
+                        pass
 
             threading.Thread(target=run, daemon=True).start()
 

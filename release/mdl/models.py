@@ -13,6 +13,17 @@ class MdlServer(TimestampedModel):
     role_name 定义的是服务所处的角色
     install_dir /datayes/{role_name}/bin/
     """
+    INIT_STATUS_CHOICES = [
+        ('uninitialized', '未初始化'),
+        ('initializing',  '初始化中'),
+        ('ready',         '运行中'),
+        ('failed',        '初始化失败'),
+        ('retired',       '已退役'),
+    ]
+    init_status = models.CharField(
+        "初始化状态", max_length=20,
+        choices=INIT_STATUS_CHOICES, default='uninitialized'
+    )
     fqdn = models.CharField("fqdn", max_length=100)
     role_name = models.CharField("角色名称", max_length=100, null=True)
     ip = models.CharField(max_length=100, null=False)

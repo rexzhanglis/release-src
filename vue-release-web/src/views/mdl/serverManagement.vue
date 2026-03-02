@@ -94,6 +94,15 @@
           >{{ lbl.name }}</el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="状态" width="110" align="center">
+        <template slot-scope="{ row }">
+          <el-tag
+            :type="initStatusType(row.init_status)"
+            size="small"
+            effect="plain"
+          >{{ initStatusLabel(row.init_status) }}</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column prop="install_dir" label="安装目录" min-width="160" show-overflow-tooltip sortable="custom">
         <template slot-scope="{ row }">
           <span class="mono">{{ row.install_dir }}</span>
@@ -111,26 +120,31 @@
       </el-table-column>
       <el-table-column label="操作" width="200" align="center" fixed="right">
         <template slot-scope="{ row }">
+          <el-button size="mini" type="text" icon="el-icon-edit" @click="handleEdit(row)">编辑</el-button>
+
+          <!-- 未初始化 / 初始化失败 → 初始化 -->
+          <el-tooltip v-if="row.init_status === 'initializing'" content="初始化进行中，请等待完成" placement="top">
+            <span><el-button size="mini" type="text" icon="el-icon-loading" disabled>初始化中</el-button></span>
+          </el-tooltip>
           <el-button
-            size="mini"
-            type="text"
-            icon="el-icon-edit"
-            @click="handleEdit(row)"
-          >编辑</el-button>
-          <el-button
-            size="mini"
-            type="text"
-            icon="el-icon-s-tools"
+            v-else-if="row.init_status === 'uninitialized' || row.init_status === 'failed'"
+            size="mini" type="text" icon="el-icon-s-tools"
             style="color:#e6a23c"
             @click="handleInit(row)"
-          >初始化</el-button>
-          <el-button
-            size="mini"
-            type="text"
-            icon="el-icon-delete"
-            style="color:#f56c6c"
-            @click="handleDelete(row)"
-          >删除</el-button>
+          >{{ row.init_status === 'failed' ? '重新初始化' : '初始化' }}</el-button>
+
+          <!-- 运行中 → 变更配置 + 更多（重新初始化） -->
+          <template v-else-if="row.init_status === 'ready'">
+            <el-button size="mini" type="text" icon="el-icon-setting" style="color:#409eff" @click="handleConfigChange(row)">变更配置</el-button>
+            <el-dropdown size="mini" trigger="click" @command="cmd => handleRowCommand(cmd, row)" style="margin-left:4px">
+              <el-button size="mini" type="text" icon="el-icon-more" style="color:#909399" />
+              <el-dropdown-menu slot="dropdown">
+                <el-dropdown-item command="reinit" icon="el-icon-s-tools">重新初始化</el-dropdown-item>
+              </el-dropdown-menu>
+            </el-dropdown>
+          </template>
+
+          <el-button size="mini" type="text" icon="el-icon-delete" style="color:#f56c6c" @click="handleDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -159,12 +173,14 @@
       :server="currentServer"
       :all-labels="allLabels"
       @success="fetchServers"
+      @init-after-create="handleInitAfterCreate"
     />
 
     <!-- 初始化弹窗 -->
     <init-server-modal
       v-model="showInit"
       :server="currentServer"
+      @done="fetchServers"
     />
 
     <!-- 批量新增弹窗 -->
@@ -394,6 +410,33 @@ export default {
         const msg = (e.response && e.response.data && e.response.data.message) || e.message || '删除失败'
         this.$message.error(msg)
       }
+    },
+
+    handleInitAfterCreate(server) {
+      if (!server) return
+      this.currentServer = server
+      this.showInit = true
+    },
+
+    handleConfigChange(row) {
+      this.$router.push({ name: 'mdlConfigManagement', query: { ip: row.ip } })
+    },
+
+    handleRowCommand(cmd, row) {
+      if (cmd === 'reinit') {
+        this.$confirm(`确认对「${row.fqdn}」重新执行初始化？运行中的服务不会被停止，但目录和 systemd 配置会被覆盖。`, '重新初始化确认', {
+          type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消'
+        }).then(() => {
+          this.handleInit(row)
+        }).catch(() => {})
+      }
+    },
+
+    initStatusLabel(s) {
+      return { uninitialized: '未初始化', initializing: '初始化中', ready: '运行中', failed: '初始化失败', retired: '已退役' }[s] || s || '未知'
+    },
+    initStatusType(s) {
+      return { uninitialized: 'info', initializing: 'warning', ready: 'success', failed: 'danger', retired: '' }[s] || 'info'
     },
   },
 }

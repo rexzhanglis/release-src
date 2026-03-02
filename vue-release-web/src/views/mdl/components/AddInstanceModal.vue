@@ -79,6 +79,7 @@
 
 <script>
 import { getServiceTypes, createConfigInstance, createConfigFile } from '@/api/configMgmt'
+import { getMdlServers } from '@/api/mdlServer'
 import request from '@/utils/request'
 
 export default {
@@ -179,6 +180,30 @@ export default {
         this.$message.success(`实例 ${this.form.name} 已新增，共创建 ${filenames.length} 个配置文件`)
         this.$emit('success')
         this.dialogVisible = false
+
+        // 检查该 IP 是否已在服务器管理中登记
+        const ip = this.form.host_ip
+        if (ip) {
+          try {
+            const res = await getMdlServers({ q: ip, page_size: 5 })
+            const list = Array.isArray(res.data) ? res.data
+              : (res.data && Array.isArray(res.data.results)) ? res.data.results : []
+            const exists = list.some(s => s.ip === ip)
+            if (!exists) {
+              this.$confirm(
+                `主机 ${ip} 尚未在服务器管理中登记，建议同步添加以便后续初始化和配置下发。`,
+                '提示：服务器未登记',
+                {
+                  confirmButtonText: '前往服务器管理',
+                  cancelButtonText: '忽略',
+                  type: 'warning',
+                }
+              ).then(() => {
+                this.$router.push({ name: 'mdlServers' })
+              }).catch(() => {})
+            }
+          } catch { /* 查询失败不影响主流程 */ }
+        }
       } catch (e) {
         const msg = (e.response && e.response.data &&
           (e.response.data.message || JSON.stringify(e.response.data))) || e.message

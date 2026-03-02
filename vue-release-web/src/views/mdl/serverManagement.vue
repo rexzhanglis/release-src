@@ -62,6 +62,14 @@
       </el-button>
       <el-button
         size="small"
+        icon="el-icon-document"
+        style="margin-left:8px"
+        @click="openOpLog"
+      >
+        操作日志
+      </el-button>
+      <el-button
+        size="small"
         icon="el-icon-refresh"
         :loading="loading"
         @click="fetchServers"
@@ -229,11 +237,89 @@
         </el-table-column>
       </el-table>
     </el-dialog>
+    <!-- 操作日志弹窗 -->
+    <el-dialog
+      title="服务器操作日志"
+      :visible.sync="showOpLog"
+      width="900px"
+      :close-on-click-modal="false"
+      @open="fetchOpLogs"
+    >
+      <!-- 筛选栏 -->
+      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+        <el-select v-model="opLogAction" placeholder="操作类型" clearable size="small" style="width:140px" @change="fetchOpLogs">
+          <el-option label="服务器初始化" value="server_init" />
+          <el-option label="新增服务器" value="server_create" />
+          <el-option label="删除服务器" value="server_delete" />
+        </el-select>
+        <el-select v-model="opLogStatus" placeholder="结果" clearable size="small" style="width:110px" @change="fetchOpLogs">
+          <el-option label="成功" value="success" />
+          <el-option label="失败" value="failed" />
+        </el-select>
+        <el-input v-model="opLogKeyword" placeholder="搜索 FQDN / IP" clearable size="small" style="width:200px" @input="opLogSearch" />
+        <el-button size="small" icon="el-icon-refresh" :loading="opLogLoading" @click="fetchOpLogs">刷新</el-button>
+      </div>
+
+      <el-table v-loading="opLogLoading" :data="opLogs" border size="small" style="width:100%">
+        <el-table-column label="时间" width="155">
+          <template slot-scope="{ row }">{{ row.created_time | formatTime }}</template>
+        </el-table-column>
+        <el-table-column label="操作类型" width="120">
+          <template slot-scope="{ row }">{{ row.action_display }}</template>
+        </el-table-column>
+        <el-table-column prop="operator" label="操作人" width="110" />
+        <el-table-column label="结果" width="80" align="center">
+          <template slot-scope="{ row }">
+            <el-tag :type="row.status === 'success' ? 'success' : 'danger'" size="mini">{{ row.status_display }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="instance_names" label="服务器" min-width="200" show-overflow-tooltip />
+        <el-table-column label="操作" width="80" align="center">
+          <template slot-scope="{ row }">
+            <el-button
+              v-if="row.deploy_task_id"
+              size="mini"
+              type="text"
+              @click="showInitLog(row)"
+            >查看日志</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <el-pagination
+        v-if="opLogTotal > opLogPageSize"
+        background
+        layout="prev, pager, next, total"
+        :total="opLogTotal"
+        :page-size="opLogPageSize"
+        :current-page="opLogPage"
+        style="margin-top:10px;text-align:right"
+        @current-change="p => { opLogPage = p; fetchOpLogs() }"
+      />
+
+      <div slot="footer">
+        <el-button @click="showOpLog = false">关闭</el-button>
+      </div>
+    </el-dialog>
+
+    <!-- 初始化日志详情弹窗 -->
+    <el-dialog
+      :visible.sync="showInitLogDialog"
+      :title="`初始化日志 — ${initLogTitle}`"
+      width="760px"
+      append-to-body
+    >
+      <pre class="init-log">{{ initLogContent || '加载中...' }}</pre>
+      <div slot="footer">
+        <el-button @click="showInitLogDialog = false">关闭</el-button>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script>
 import { getMdlServers, deleteMdlServer, getLabels, createLabel, deleteLabel } from '@/api/mdlServer'
+import { getAuditLogs } from '@/api/configMgmt'
 import ServerFormModal from './components/ServerFormModal'
 import InitServerModal from './components/InitServerModal'
 import BatchAddModal from './components/BatchAddModal'
@@ -275,7 +361,28 @@ export default {
       sortOrder: '',
       allLabels: [],
       newLabelName: '',
+      // 操作日志
+      showOpLog: false,
+      opLogLoading: false,
+      opLogs: [],
+      opLogTotal: 0,
+      opLogPage: 1,
+      opLogPageSize: 20,
+      opLogAction: '',
+      opLogStatus: '',
+      opLogKeyword: '',
+      opLogSearchTimer: null,
+      // 初始化日志详情
+      showInitLogDialog: false,
+      initLogTitle: '',
+      initLogContent: '',
     }
+  },
+  filters: {
+    formatTime(val) {
+      if (!val) return ''
+      return val.replace('T', ' ').slice(0, 19)
+    },
   },
   created() {
     this.fetchLabels()
@@ -432,6 +539,56 @@ export default {
       }
     },
 
+    openOpLog() {
+      this.opLogPage = 1
+      this.opLogAction = ''
+      this.opLogStatus = ''
+      this.opLogKeyword = ''
+      this.showOpLog = true
+    },
+
+    async fetchOpLogs() {
+      this.opLogLoading = true
+      try {
+        const res = await getAuditLogs({
+          action: this.opLogAction || 'server_init,server_create,server_delete',
+          status: this.opLogStatus || undefined,
+          keyword: this.opLogKeyword || undefined,
+          page: this.opLogPage,
+          page_size: this.opLogPageSize,
+        })
+        const d = res.data && res.data.data ? res.data.data : res.data
+        this.opLogs = d.items || []
+        this.opLogTotal = d.total || 0
+      } catch (e) {
+        this.$message.error('加载操作日志失败')
+      } finally {
+        this.opLogLoading = false
+      }
+    },
+
+    opLogSearch() {
+      clearTimeout(this.opLogSearchTimer)
+      this.opLogSearchTimer = setTimeout(() => {
+        this.opLogPage = 1
+        this.fetchOpLogs()
+      }, 400)
+    },
+
+    async showInitLog(row) {
+      this.initLogTitle = row.instance_names || ''
+      this.initLogContent = '加载中...'
+      this.showInitLogDialog = true
+      try {
+        const { getDeployTaskDetail } = await import('@/api/configMgmt')
+        const res = await getDeployTaskDetail(row.deploy_task_id)
+        const d = res.data && res.data.data ? res.data.data : res.data
+        this.initLogContent = d.log || '（无日志）'
+      } catch {
+        this.initLogContent = '（日志加载失败）'
+      }
+    },
+
     initStatusLabel(s) {
       return { uninitialized: '未初始化', initializing: '初始化中', ready: '运行中', failed: '初始化失败', retired: '已退役' }[s] || s || '未知'
     },
@@ -458,5 +615,17 @@ export default {
 .empty-placeholder {
   text-align: center;
   padding: 40px 0;
+}
+.init-log {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: 'Consolas', 'Monaco', monospace;
 }
 </style>

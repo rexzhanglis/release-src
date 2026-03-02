@@ -33,7 +33,7 @@ except Exception:
 
     ansible_runner = AnsibleRunnerMock()
 
-from mdl.models import MdlServer, ConfigDeployTask, ServiceType, ConfigInstance, ConfigFile, Label
+from mdl.models import MdlServer, ConfigDeployTask, ServiceType, ConfigInstance, ConfigFile, Label, ConfigAuditLog
 from const.models import Constance
 from common.utils.apiutil import ApiResponse
 
@@ -324,6 +324,18 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                         _srv = MdlServer.objects.get(id=_server_id)
                         _srv.init_status = 'ready' if task.status == 'success' else 'failed'
                         _srv.save(update_fields=['init_status'])
+                    except Exception:
+                        pass
+                    # 写审计日志
+                    try:
+                        ConfigAuditLog.objects.create(
+                            action='server_init',
+                            operator=operator,
+                            status='success' if task.status == 'success' else 'failed',
+                            instance_names=f'{_server_fqdn} ({_server_ip})',
+                            summary=f'服务器初始化：{_server_fqdn} ({_server_ip})',
+                            deploy_task=task,
+                        )
                     except Exception:
                         pass
 

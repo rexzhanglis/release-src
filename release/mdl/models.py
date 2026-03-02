@@ -183,6 +183,10 @@ class ConfigAuditLog(TimestampedModel):
         ('push_consul',   '推送 Consul'),
         ('deploy',        'Ansible 部署'),
         ('sync',          '同步 GitLab'),
+        # 服务器管理相关
+        ('server_init',   '服务器初始化'),
+        ('server_create', '新增服务器'),
+        ('server_delete', '删除服务器'),
     ]
     STATUS_CHOICES = [
         ('success', '成功'),

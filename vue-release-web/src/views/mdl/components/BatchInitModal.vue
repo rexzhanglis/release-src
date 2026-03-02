@@ -215,7 +215,7 @@ export default {
         const timer = setInterval(async () => {
           try {
             const r = await getInitStatus(serverId, taskId)
-            const d = r.data && r.data.data
+            const d = r.data
             if (!d) return
             const log = d.log || ''
             this.$set(this.taskRows, rowIndex, { ...this.taskRows[rowIndex], log })

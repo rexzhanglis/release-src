@@ -1227,7 +1227,9 @@ class ConfigAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         date_to = self.request.query_params.get('date_to')
         keyword = self.request.query_params.get('keyword')
         if action:
-            qs = qs.filter(action=action)
+            # 支持逗号分隔多值，如 action=server_init,server_create,server_delete
+            actions = [a.strip() for a in action.split(',') if a.strip()]
+            qs = qs.filter(action__in=actions)
         if operator:
             qs = qs.filter(operator__icontains=operator)
         if date_from:

@@ -1,7 +1,8 @@
 version: '3.8'
 
 services:
-  # 后端服务
+
+  # ── 后端服务 ───────────────────────────────────────────────
   release-backend:
     image: release-backend:v1.0.0
     container_name: release-backend
@@ -10,7 +11,7 @@ services:
       - DB_NAME=release_qa
       - DB_USER=alertcenter
       - DB_PASSWORD=Huawei@123
-      - DB_HOST=10.24.51.155  # 替换为您的真实数据库 IP
+      - DB_HOST=10.24.51.155
       - DB_PORT=31431
       # GitLab 配置
       - CONFIG_GITLAB_URL=http://git.datayes.com
@@ -24,31 +25,22 @@ services:
       # Ansible 配置
       - ANSIBLE_SSH_USER=zhixiong.zeng
       - ANSIBLE_SSH_PASS=datayes@123
-    # 注意：如果不需要挂载本地代码进行热更新，可以移除 volumes
-    # volumes:
-    #   - ./release:/datayes/release
     ports:
       - "8000:8000"
-    # depends_on:
-    #   - release-db
     command: python manage.py runserver 0.0.0.0:8000
 
-  # 前端服务
+  # ── 前端服务 ───────────────────────────────────────────────
   release-web:
     image: release-web:v1.0.0
     container_name: release-web
     restart: always
     environment:
-      # 这里配置前端访问后端的地址（浏览器可访问的地址）
-      # 请将 10.24.71.51 替换为您的 Linux 机器真实 IP
-      - BACKEND_API_URL=http://10.24.71.51:8000/api
-      - WEB_LOGIN_URL=http://10.24.71.51:9528/
-      - BACKEND_LOGIN_URL=http://10.24.71.51:8000/login
+      # 浏览器直接请求后端域名，无需写 IP:端口
+      - BACKEND_API_URL=http://mdl-release-backend.devops2.wmcloud.com/api
+      - WEB_LOGIN_URL=http://mdl-release.devops2.wmcloud.com/
+      - BACKEND_LOGIN_URL=http://mdl-release-backend.devops2.wmcloud.com/login
     ports:
       - "9528:80"
-    # 纯部署模式下通常不需要挂载本地 dist
-    # volumes:
-    #   - ./vue-release-web/dist:/usr/share/nginx/html
     depends_on:
       - release-backend
 
@@ -64,7 +56,6 @@ services:
   #     - "3306:3306"
   #   volumes:
   #     - db_data:/var/lib/mysql
-
 
 volumes:
   db_data:

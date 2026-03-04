@@ -7,151 +7,128 @@
         <el-select
           v-model="serviceId"
           placeholder="Service ID（可选）"
-          clearable
-          filterable
-          size="small"
-          style="width:280px"
+          clearable filterable size="small" style="width:280px"
         >
-          <el-option
-            v-for="s in serviceList"
-            :key="s.service_id"
-            :label="s.label"
-            :value="s.service_id"
-          />
+          <el-option v-for="s in serviceList" :key="s.service_id" :label="s.label" :value="s.service_id" />
         </el-select>
         <span style="margin:0 6px;color:#909399">.</span>
         <el-input
           v-model="msgId"
           placeholder="Message ID，如 53"
-          size="small"
-          style="width:160px"
-          clearable
+          size="small" style="width:160px" clearable
           @keyup.enter.native="handleQuery"
         />
-        <el-button
-          type="primary"
-          size="small"
-          icon="el-icon-search"
-          :loading="loading"
-          style="margin-left:12px"
-          @click="handleQuery"
-        >查询</el-button>
-        <span v-if="queryLabel" class="query-label">
-          查询：<b>{{ queryLabel }}</b>
-        </span>
+        <el-button type="primary" size="small" icon="el-icon-search"
+          :loading="loading" style="margin-left:12px" @click="handleQuery">查询</el-button>
+        <span v-if="queryLabel" class="query-label">查询：<b>{{ queryLabel }}</b></span>
       </div>
       <div class="search-tip">
-        格式示例：Service ID 选 <b>6</b>，Message ID 填 <b>53</b> → 查询 <b>6.53</b>（深L2 第53号消息）；
-        不选 Service ID 则匹配所有 Service 下的该 Message ID。
+        选 Service ID + 填 Message ID 查询完整转发链路，不选 Service ID 则匹配所有 Service。
       </div>
     </el-card>
 
-    <!-- 结果区 -->
     <div v-if="result" class="result-area">
-      <!-- 统计摘要 -->
+      <!-- 统计 -->
       <el-row :gutter="12" style="margin-bottom:16px">
-        <el-col :span="8">
-          <el-card shadow="never" class="stat-card stat-config">
-            <div class="stat-num">{{ result.config.length }}</div>
-            <div class="stat-desc">配置文件中的转发机</div>
+        <el-col :span="6">
+          <el-card shadow="never" class="stat-card">
+            <div class="stat-num" style="color:#409eff">{{ result.chains.length }}</div>
+            <div class="stat-desc">条完整链路</div>
           </el-card>
         </el-col>
-        <el-col :span="8">
-          <el-card shadow="never" class="stat-card stat-live">
-            <div class="stat-num">{{ result.live.length }}</div>
-            <div class="stat-desc">实时活跃订阅连接</div>
+        <el-col :span="6">
+          <el-card shadow="never" class="stat-card">
+            <div class="stat-num" style="color:#67c23a">{{ result.live.length }}</div>
+            <div class="stat-desc">实时活跃订阅</div>
           </el-card>
         </el-col>
-        <el-col :span="8">
-          <el-card shadow="never" class="stat-card stat-warn">
-            <div class="stat-num">{{ result.unreachable.length }}</div>
-            <div class="stat-desc">无法连接的服务器</div>
+        <el-col :span="6">
+          <el-card shadow="never" class="stat-card">
+            <div class="stat-num" style="color:#909399">{{ Object.keys(result.nodes).length }}</div>
+            <div class="stat-desc">涉及节点数</div>
+          </el-card>
+        </el-col>
+        <el-col :span="6">
+          <el-card shadow="never" class="stat-card">
+            <div class="stat-num" style="color:#e6a23c">{{ result.unreachable.length }}</div>
+            <div class="stat-desc">无法连接</div>
           </el-card>
         </el-col>
       </el-row>
 
-      <el-row :gutter="16">
-        <!-- 左：配置文件来源 -->
-        <el-col :span="12">
-          <el-card shadow="never">
-            <div slot="header" class="card-header">
-              <i class="el-icon-document" style="color:#409eff" />
-              <span>配置文件（静态）</span>
-              <el-tag size="mini" type="info" style="margin-left:8px">feeder_handler.cfg</el-tag>
-            </div>
-            <div v-if="result.config.length === 0" class="empty-tip">
-              未找到包含该消息的配置
-            </div>
-            <el-table v-else :data="result.config" border size="small">
-              <el-table-column label="转发机实例" min-width="160" show-overflow-tooltip>
-                <template slot-scope="{ row }">
-                  <span class="mono">{{ row.fqdn }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="消息" width="80" align="center">
-                <template slot-scope="{ row }">
-                  <el-tag size="mini" type="primary">{{ row.msg_label }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="服务名" min-width="140" show-overflow-tooltip>
-                <template slot-scope="{ row }">
-                  <span style="font-size:11px;color:#606266">{{ row.service_name }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="上游地址" min-width="160" show-overflow-tooltip>
-                <template slot-scope="{ row }">
-                  <span class="mono" style="font-size:11px">{{ row.upstream_address }}</span>
-                </template>
-              </el-table-column>
-            </el-table>
-          </el-card>
-        </el-col>
+      <!-- 完整链路 -->
+      <el-card shadow="never" style="margin-bottom:16px">
+        <div slot="header" class="card-header">
+          <i class="el-icon-sort" style="color:#409eff" />
+          <span>完整转发链路（配置文件追溯）</span>
+          <el-tag size="mini" type="info" style="margin-left:8px">从源头到转发机</el-tag>
+        </div>
 
-        <!-- 右：实时订阅 -->
-        <el-col :span="12">
-          <el-card shadow="never">
-            <div slot="header" class="card-header">
-              <i class="el-icon-connection" style="color:#67c23a" />
-              <span>实时订阅（heartbeat）</span>
-              <el-tag size="mini" type="success" style="margin-left:8px">当前连接</el-tag>
-            </div>
-            <div v-if="result.live.length === 0" class="empty-tip">
-              当前无下游订阅该消息
-            </div>
-            <el-table v-else :data="result.live" border size="small">
-              <el-table-column label="转发机" width="130" show-overflow-tooltip>
-                <template slot-scope="{ row }">
-                  <span class="mono" style="font-size:11px">{{ row.forwarder_ip }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="客户端地址" min-width="180" show-overflow-tooltip>
-                <template slot-scope="{ row }">
-                  <span class="mono" style="font-size:11px">{{ row.client_address }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="订阅消息" width="90" align="center">
-                <template slot-scope="{ row }">
+        <div v-if="result.chains.length === 0" class="empty-tip">
+          未找到包含该消息的配置
+        </div>
+
+        <div v-for="(chain, ci) in result.chains" :key="ci" class="chain-row">
+          <span class="chain-index">链路 {{ ci + 1 }}</span>
+          <div class="chain-nodes">
+            <template v-for="(node, ni) in chain">
+              <!-- 节点 -->
+              <div :key="'n' + ni" class="chain-node" :class="nodeClass(node)">
+                <div class="node-type-tag">{{ nodeTypeLabel(node) }}</div>
+                <div class="node-ip">{{ node.node }}</div>
+                <div class="node-instance" :title="node.instance">{{ node.instance }}</div>
+                <div v-if="node.services && node.services.length" class="node-services">
                   <el-tag
-                    v-for="sub in row.matched_subscriptions"
-                    :key="sub.label"
-                    size="mini"
-                    type="success"
-                    style="margin:1px"
-                  >{{ sub.label }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="连接时间" width="110">
-                <template slot-scope="{ row }">
-                  <span style="font-size:11px;color:#909399">{{ row.start_date }}<br>{{ row.start_time }}</span>
-                </template>
-              </el-table-column>
-            </el-table>
-          </el-card>
-        </el-col>
-      </el-row>
+                    v-for="s in node.services" :key="s.service_name"
+                    size="mini" type="primary" style="margin:1px 1px 0 0"
+                  >{{ s.msg_label }}</el-tag>
+                </div>
+              </div>
+              <!-- 箭头 -->
+              <div v-if="ni < chain.length - 1" :key="'a' + ni" class="chain-arrow">→</div>
+            </template>
+          </div>
+        </div>
+      </el-card>
 
-      <!-- 无法连接的服务器 -->
-      <el-card v-if="result.unreachable.length > 0" shadow="never" style="margin-top:16px">
+      <!-- 实时订阅 -->
+      <el-card shadow="never" style="margin-bottom:16px">
+        <div slot="header" class="card-header">
+          <i class="el-icon-connection" style="color:#67c23a" />
+          <span>实时订阅（heartbeat）</span>
+          <el-tag size="mini" type="success" style="margin-left:8px">当前连接</el-tag>
+        </div>
+        <div v-if="result.live.length === 0" class="empty-tip">当前无下游订阅该消息</div>
+        <el-table v-else :data="result.live" border size="small">
+          <el-table-column label="转发机 IP" width="130">
+            <template slot-scope="{ row }"><span class="mono">{{ row.forwarder_ip }}</span></template>
+          </el-table-column>
+          <el-table-column label="客户端地址" min-width="200" show-overflow-tooltip>
+            <template slot-scope="{ row }"><span class="mono">{{ row.client_address }}</span></template>
+          </el-table-column>
+          <el-table-column label="订阅消息" width="100" align="center">
+            <template slot-scope="{ row }">
+              <el-tag v-for="s in row.matched_subscriptions" :key="s.label"
+                size="mini" type="success" style="margin:1px">{{ s.label }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="连接时间" width="130">
+            <template slot-scope="{ row }">
+              <span style="font-size:11px;color:#909399">{{ row.start_date }} {{ row.start_time }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="积压字节" width="90" align="right">
+            <template slot-scope="{ row }">
+              <span :style="{ color: row.pending_bytes > 0 ? '#e6a23c' : '#67c23a' }">
+                {{ row.pending_bytes }}
+              </span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+
+      <!-- 无法连接 -->
+      <el-card v-if="result.unreachable.length > 0" shadow="never">
         <div slot="header" class="card-header">
           <i class="el-icon-warning" style="color:#e6a23c" />
           <span>无法连接（heartbeat 超时）</span>
@@ -159,7 +136,7 @@
         <el-table :data="result.unreachable" border size="small">
           <el-table-column prop="ip" label="IP" width="140" />
           <el-table-column prop="fqdn" label="FQDN" min-width="180" show-overflow-tooltip />
-          <el-table-column prop="error" label="错误" min-width="200" show-overflow-tooltip>
+          <el-table-column prop="error" label="错误" min-width="200">
             <template slot-scope="{ row }">
               <span style="color:#f56c6c;font-size:11px">{{ row.error }}</span>
             </template>
@@ -168,10 +145,9 @@
       </el-card>
     </div>
 
-    <!-- 空状态 -->
     <div v-else-if="!loading" class="empty-placeholder">
       <i class="el-icon-share" style="font-size:48px;color:#dcdfe6" />
-      <p style="color:#909399;margin-top:12px">输入消息号后点击查询，查看转发链路</p>
+      <p style="color:#909399;margin-top:12px">输入消息号后点击查询，追溯完整转发链路</p>
     </div>
   </div>
 </template>
@@ -193,7 +169,6 @@ export default {
   },
   created() {
     this.fetchServices()
-    // 支持从路由参数直接带入查询，如从其他页面跳转
     const { msg } = this.$route.query
     if (msg) {
       const parts = msg.split('.')
@@ -216,19 +191,14 @@ export default {
 
     async handleQuery() {
       const mid = this.msgId.trim()
-      if (!mid) {
-        this.$message.warning('请输入 Message ID')
-        return
-      }
+      if (!mid) { this.$message.warning('请输入 Message ID'); return }
       const msg = this.serviceId ? `${this.serviceId}.${mid}` : mid
       this.loading = true
       this.result = null
-      this.queryLabel = ''
       try {
         const res = await queryMsgChain(msg)
-        const d = res.data
-        this.result = d
-        const q = d.query || {}
+        this.result = res.data
+        const q = res.data.query || {}
         this.queryLabel = q.service_label
           ? `${q.service_id}.${q.msg_id}（${q.service_label}）`
           : `所有 Service 下的 msg ${q.msg_id}`
@@ -238,76 +208,120 @@ export default {
         this.loading = false
       }
     },
+
+    nodeClass(node) {
+      return {
+        'node-external': node.type === 'external',
+        'node-source': node.type === 'source',
+        'node-forwarder': node.type === 'forwarder',
+      }
+    },
+
+    nodeTypeLabel(node) {
+      return { external: '外部源', source: '接入层', forwarder: '转发机' }[node.type] || node.type
+    },
   },
 }
 </script>
 
 <style scoped>
-.msg-chain {
-  padding: 16px;
-}
-.search-card {
-  margin-bottom: 16px;
-}
-.search-bar {
+.msg-chain { padding: 16px; }
+.search-card { margin-bottom: 16px; }
+.search-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.search-label { font-size: 13px; color: #606266; margin-right: 6px; }
+.search-tip { margin-top: 10px; font-size: 12px; color: #909399; }
+.query-label { margin-left: 16px; font-size: 13px; color: #409eff; }
+.result-area { margin-top: 4px; }
+.stat-card { text-align: center; padding: 6px 0; }
+.stat-num { font-size: 28px; font-weight: bold; line-height: 1.3; }
+.stat-desc { font-size: 12px; color: #909399; margin-top: 2px; }
+.card-header { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: bold; }
+.empty-tip { text-align: center; color: #c0c4cc; padding: 24px 0; font-size: 13px; }
+.empty-placeholder { text-align: center; padding: 80px 0; }
+.mono { font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; }
+
+/* 链路行 */
+.chain-row {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+  padding: 10px;
+  background: #fafafa;
+  border-radius: 4px;
+  border: 1px solid #ebeef5;
+  overflow-x: auto;
 }
-.search-label {
-  font-size: 13px;
-  color: #606266;
-  margin-right: 6px;
-}
-.search-tip {
-  margin-top: 10px;
+.chain-index {
   font-size: 12px;
   color: #909399;
+  white-space: nowrap;
+  min-width: 42px;
+  padding-top: 18px;
+  margin-right: 8px;
 }
-.query-label {
-  margin-left: 16px;
-  font-size: 13px;
-  color: #409eff;
-}
-.result-area {
-  margin-top: 4px;
-}
-.stat-card {
-  text-align: center;
-  padding: 8px 0;
-}
-.stat-num {
-  font-size: 32px;
-  font-weight: bold;
-  line-height: 1.2;
-}
-.stat-desc {
-  font-size: 12px;
-  color: #909399;
-  margin-top: 4px;
-}
-.stat-config .stat-num { color: #409eff; }
-.stat-live .stat-num   { color: #67c23a; }
-.stat-warn .stat-num   { color: #e6a23c; }
-.card-header {
+.chain-nodes {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 14px;
-  font-weight: bold;
+  flex-wrap: nowrap;
+  gap: 0;
 }
-.empty-tip {
-  text-align: center;
+.chain-arrow {
+  font-size: 18px;
   color: #c0c4cc;
-  padding: 24px 0;
-  font-size: 13px;
+  padding: 0 6px;
+  margin-top: 10px;
+  flex-shrink: 0;
 }
-.empty-placeholder {
-  text-align: center;
-  padding: 80px 0;
+
+/* 节点 */
+.chain-node {
+  min-width: 120px;
+  max-width: 160px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 2px solid #dcdfe6;
+  background: #fff;
+  flex-shrink: 0;
+  font-size: 11px;
 }
-.mono {
-  font-family: 'Consolas', 'Monaco', monospace;
+.node-external {
+  border-color: #f56c6c;
+  background: #fef0f0;
 }
+.node-source {
+  border-color: #e6a23c;
+  background: #fdf6ec;
+}
+.node-forwarder {
+  border-color: #409eff;
+  background: #ecf5ff;
+}
+.node-type-tag {
+  font-size: 10px;
+  color: #fff;
+  background: #909399;
+  border-radius: 3px;
+  padding: 0 4px;
+  display: inline-block;
+  margin-bottom: 3px;
+}
+.node-external .node-type-tag  { background: #f56c6c; }
+.node-source .node-type-tag    { background: #e6a23c; }
+.node-forwarder .node-type-tag { background: #409eff; }
+.node-ip {
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: bold;
+  color: #303133;
+  word-break: break-all;
+}
+.node-instance {
+  font-size: 10px;
+  color: #909399;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+.node-services { margin-top: 4px; }
 </style>

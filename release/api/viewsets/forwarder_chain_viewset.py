@@ -142,7 +142,7 @@ def _build_ip_to_config_map():
                         except ValueError:
                             pass
 
-        if cf.filename == 'feeder_receiver.cfg':
+        if _is_receiver_cf(cf):
             if ip:
                 receiver_ip_set.add(ip)
                 ip_to_cf[ip] = cf
@@ -231,6 +231,22 @@ def _get_upstreams_from_content(content, service_id, msg_id):
             if matched:
                 results.append((upstream.get('Address', ''), matched))
     return results
+
+
+def _is_receiver_cf(cf):
+    """判断配置文件是否属于接收机节点。
+    条件：filename==feeder_receiver.cfg，或 service_type 名称含 'receiver'，
+    或配置内容里没有 MSG_FORWARDER/TEAMING_HANDLER（纯接收机用 feeder_handler.cfg 的情况）。
+    """
+    if cf.filename == 'feeder_receiver.cfg':
+        return True
+    st_name = (cf.instance.service_type.name if cf.instance.service_type_id else '') if hasattr(cf.instance, 'service_type') else ''
+    if 'receiver' in st_name.lower():
+        return True
+    content = cf.content or {}
+    if isinstance(content, dict) and not content.get('MSG_FORWARDER') and not content.get('TEAMING_HANDLER'):
+        return True
+    return False
 
 
 def _cf_ip(cf):
@@ -381,7 +397,7 @@ def build_chain(service_id, msg_id):
                     # 内部机器（转发机或接收机），继续往上追
                     up_ip_real = _cf_ip(upstream_cf) or up_ip  # 解析失败时用上游地址里的 IP
                     up_content = upstream_cf.content or {}
-                    if upstream_cf.filename == 'feeder_receiver.cfg':
+                    if _is_receiver_cf(upstream_cf):
                         up_type = 'receiver'
                     elif up_content.get('TEAMING_HANDLER'):
                         up_type = 'aggregator'

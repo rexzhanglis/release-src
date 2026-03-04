@@ -77,53 +77,90 @@ def parse_query_msg(msg_str):
 
 def _build_ip_to_config_map():
     """
-    预加载所有 feeder_handler.cfg，构建两个索引：
+    预加载所有 feeder_handler.cfg 和 feeder_receiver.cfg，构建两个索引：
       ip_to_cf:       ip -> ConfigFile（通过 instance.host_ip 或 instance.name 解析）
       ip_port_to_cf:  (ip, port) -> ConfigFile（通过 Publishers.Address 解析）
     返回 (ip_to_cf, ip_port_to_cf, all_cfs)
+    注意：all_cfs 只包含 feeder_handler.cfg（转发/聚合机），
+          receiver_ip_set 记录已知接收机 IP，用于区分"接收机"和"外部源"。
     """
-    all_cfs = list(ConfigFile.objects.filter(filename='feeder_handler.cfg').select_related('instance'))
+    all_cfs = list(ConfigFile.objects.filter(
+        filename__in=['feeder_handler.cfg', 'feeder_receiver.cfg']
+    ).select_related('instance'))
 
     ip_to_cf = {}       # ip -> cf（一台机器只有一个主 IP）
     ip_port_to_cf = {}  # (ip, port) -> cf
+    receiver_ip_set = set()  # 已知接收机 IP 集合
+
+    handler_cfs = []  # 只含 feeder_handler.cfg 的列表
 
     for cf in all_cfs:
-        # 从 instance.host_ip 或 instance.name（格式通常含IP）获取 IP
+        # 从 instance.host_ip 或 instance.name 解析 IP
         ip = (cf.instance.host_ip or '').strip()
         if not ip:
-            # 尝试从 instance name 解析（如 "10.121.21.240_19015"）
             name = cf.instance.name
-            ip = name.split('_')[0] if '_' in name else ''
-        if ip:
-            ip_to_cf[ip] = cf
+            # 格式可能是 "bjs_10.51.201.209" 或 "10.121.21.240_19015"
+            # 尝试找最后一段像IP的部分
+            parts = name.replace('-', '_').split('_')
+            for p in reversed(parts):
+                if p.count('.') == 3:
+                    ip = p
+                    break
+            if not ip:
+                ip = name.split('_')[0] if '_' in name else name
 
-        # 从 Publishers[].Address 解析监听端口，格式 "0.0.0.0:9010"
-        content = cf.content
-        if not content or not isinstance(content, dict):
-            continue
-        publishers = content.get('feeder_handler', {}).get('Publishers', [])
-        for pub in publishers:
-            addr = pub.get('Address', '')
-            if ':' in addr:
-                port_str = addr.split(':')[-1]
-                try:
-                    port = int(port_str)
-                    if ip:
-                        ip_port_to_cf[(ip, port)] = cf
-                except ValueError:
-                    pass
+        if cf.filename == 'feeder_receiver.cfg':
+            # 接收机：记录其 IP，并加入 ip_port_to_cf（让上游追溯时能找到它）
+            if ip:
+                receiver_ip_set.add(ip)
+                ip_to_cf[ip] = cf
+                # receiver 监听端口：从 feeder_handler key 的 Publishers 解析
+                content = cf.content
+                if content and isinstance(content, dict):
+                    publishers = content.get('feeder_handler', {}).get('Publishers', [])
+                    for pub in publishers:
+                        addr = pub.get('Address', '')
+                        if ':' in addr:
+                            port_str = addr.split(':')[-1]
+                            try:
+                                port = int(port_str)
+                                ip_port_to_cf[(ip, port)] = cf
+                            except ValueError:
+                                pass
+        else:
+            # feeder_handler.cfg — 转发机/聚合机
+            handler_cfs.append(cf)
+            if ip:
+                ip_to_cf[ip] = cf
 
-    return ip_to_cf, ip_port_to_cf, all_cfs
+            content = cf.content
+            if not content or not isinstance(content, dict):
+                continue
+            publishers = content.get('feeder_handler', {}).get('Publishers', [])
+            for pub in publishers:
+                addr = pub.get('Address', '')
+                if ':' in addr:
+                    port_str = addr.split(':')[-1]
+                    try:
+                        port = int(port_str)
+                        if ip:
+                            ip_port_to_cf[(ip, port)] = cf
+                    except ValueError:
+                        pass
+
+    return ip_to_cf, ip_port_to_cf, handler_cfs, receiver_ip_set
 
 
 def _parse_upstream_addrs(address_str):
     """
-    解析 UpStreams.Address 字段，支持分号分隔多地址：
-    "10.121.21.231:9011;10.121.21.234:9010"
+    解析 UpStreams.Address，支持多种分隔符：
+      MSG_FORWARDER  用分号:  "10.x.x.x:9011;10.y.y.y:9010"
+      TEAMING_HANDLER 用竖线: "10.x.x.x:9010|10.y.y.y:9010"
     返回 [(ip, port), ...]
     """
     results = []
-    for part in address_str.split(';'):
+    # 统一把 | 替换为 ; 再分割
+    for part in address_str.replace('|', ';').split(';'):
         part = part.strip()
         if not part or ':' not in part:
             continue
@@ -135,173 +172,223 @@ def _parse_upstream_addrs(address_str):
     return results
 
 
-def _msg_in_upstream(upstream, service_id, msg_id):
+def _get_upstreams_from_content(content, service_id, msg_id):
     """
-    检查某个 upstream 配置里是否包含目标消息。
-    返回匹配的 service 信息列表。
+    从配置文件内容中提取包含目标消息的上游地址列表。
+    同时检查 MSG_FORWARDER 和 TEAMING_HANDLER 两种 handler。
+    返回 [(address_str, matched_services), ...]
     """
-    matched = []
-    for svc in upstream.get('Services', []):
-        svc_name = svc.get('Name', '')
-        messages = svc.get('Messages', [])
-        if not isinstance(messages, list):
+    results = []
+    for handler_key in ('MSG_FORWARDER', 'TEAMING_HANDLER'):
+        handler = content.get(handler_key, {})
+        if not isinstance(handler, dict):
             continue
-        if msg_id not in messages:
-            continue
-        svc_id = SERVICE_NAME_TO_ID.get(svc_name)
-        if service_id is not None and svc_id != service_id:
-            continue
-        matched.append({
-            'service_name': svc_name,
-            'service_id': svc_id,
-            'msg_label': f'{svc_id}.{msg_id}' if svc_id else str(msg_id),
-        })
-    return matched
+        for upstream in handler.get('UpStreams', []):
+            matched = []
+            for svc in upstream.get('Services', []):
+                svc_name = svc.get('Name', '')
+                messages = svc.get('Messages', [])
+                if not isinstance(messages, list):
+                    continue
+                if msg_id not in messages:
+                    continue
+                svc_id = SERVICE_NAME_TO_ID.get(svc_name)
+                if service_id is not None and svc_id != service_id:
+                    continue
+                matched.append({
+                    'service_name': svc_name,
+                    'service_id': svc_id,
+                    'msg_label': f'{svc_id}.{msg_id}' if svc_id else str(msg_id),
+                })
+            if matched:
+                results.append((upstream.get('Address', ''), matched))
+    return results
+
+
+def _cf_ip(cf):
+    """获取 ConfigFile 对应机器的 IP。"""
+    ip = (cf.instance.host_ip or '').strip()
+    if not ip:
+        name = cf.instance.name
+        ip = name.split('_')[0] if '_' in name else name
+    return ip
 
 
 def build_chain(service_id, msg_id):
     """
-    递归追溯转发链路，返回链路节点列表（从源头到当前机器的有序链条集合）。
+    构建消息转发的拓扑图（DAG）。
 
     返回结构：
     {
-      'chains': [
-        [  # 一条完整链路
-          {'node': 'ip:port 或 外部源', 'instance': '实例名', 'type': 'external|forwarder', 'services': [...], 'depth': 0},
-          ...
-        ],
+      'nodes': {
+        node_id: {
+          'id': str,           # 唯一标识（ip 或 ip:port）
+          'instance': str,     # 实例名
+          'type': str,         # 'forwarder' | 'receiver' | 'external'
+          'services': [...],
+        },
+        ...
+      },
+      'edges': [
+        {'from': node_id, 'to': node_id, 'services': [...]},
         ...
       ],
-      'nodes': { ip: {...} },   # 所有节点详情（去重）
+      'chains': [...],   # 保留向后兼容的链路列表（用于前端展示）
     }
     """
-    ip_to_cf, ip_port_to_cf, all_cfs = _build_ip_to_config_map()
+    ip_to_cf, ip_port_to_cf, all_cfs, receiver_ip_set = _build_ip_to_config_map()
 
-    # 第一步：找所有直接包含目标消息的转发机（起点）
-    start_nodes = []  # [(cf, upstream_addr_str, matched_services)]
+    nodes = {}   # node_id -> node_info
+    edges = set()  # (from_id, to_id) 去重
+    edge_list = []
+
+    def get_or_create_node(node_id, instance_name, node_type, svcs):
+        if node_id not in nodes:
+            nodes[node_id] = {
+                'id': node_id,
+                'instance': instance_name,
+                'type': node_type,
+                'services': svcs,
+            }
+        else:
+            # 合并 services
+            existing = {s['msg_label'] for s in nodes[node_id]['services']}
+            for s in svcs:
+                if s['msg_label'] not in existing:
+                    nodes[node_id]['services'].append(s)
+        return nodes[node_id]
+
+    def add_edge(from_id, to_id, svcs):
+        key = (from_id, to_id)
+        if key not in edges:
+            edges.add(key)
+            edge_list.append({'from': from_id, 'to': to_id, 'services': svcs})
+
+    visited_cfs = set()  # 防止重复处理同一个 cf
+
+    def process_cf(cf, visited_ips=None):
+        """
+        处理一个 ConfigFile：
+        - 找出该机器所有包含目标消息的 upstream 条目
+        - 为每个 upstream address 递归向上追溯
+        """
+        if visited_ips is None:
+            visited_ips = set()
+
+        cf_id = cf.id
+        if cf_id in visited_cfs:
+            return
+        visited_cfs.add(cf_id)
+
+        content = cf.content
+        if not content or not isinstance(content, dict):
+            return
+
+        this_ip = _cf_ip(cf)
+
+        # 判断节点类型：TEAMING_HANDLER 是聚合转发机，MSG_FORWARDER 是普通转发机
+        has_teaming = bool(content.get('TEAMING_HANDLER'))
+        this_type = 'aggregator' if has_teaming else 'forwarder'
+
+        upstream_entries = _get_upstreams_from_content(content, service_id, msg_id)
+        if not upstream_entries:
+            return
+
+        this_node = get_or_create_node(this_ip, cf.instance.name, this_type, [])
+
+        for addr_str, matched_svcs in upstream_entries:
+            # 更新本节点的 services
+            for s in matched_svcs:
+                existing = {x['msg_label'] for x in this_node['services']}
+                if s['msg_label'] not in existing:
+                    this_node['services'].append(s)
+
+            upstream_addrs = _parse_upstream_addrs(addr_str)
+            for up_ip, up_port in upstream_addrs:
+                if up_ip in visited_ips:
+                    continue
+
+                upstream_cf = ip_port_to_cf.get((up_ip, up_port))
+                if upstream_cf is None:
+                    if up_ip in receiver_ip_set:
+                        # 接收机（有配置文件，但 ip_port_to_cf 未匹配到端口）
+                        recv_cf = ip_to_cf.get(up_ip)
+                        recv_instance = recv_cf.instance.name if recv_cf else up_ip
+                        get_or_create_node(up_ip, recv_instance, 'receiver', matched_svcs)
+                        add_edge(up_ip, this_ip, matched_svcs)
+                    else:
+                        # 真正的外部源（交易所，IP 在平台上没有任何配置文件）
+                        ext_id = f'{up_ip}:{up_port}'
+                        get_or_create_node(ext_id, ext_id, 'external', matched_svcs)
+                        add_edge(ext_id, this_ip, matched_svcs)
+                else:
+                    # 内部机器（转发机或接收机），继续往上追
+                    up_ip_real = _cf_ip(upstream_cf)
+                    up_content = upstream_cf.content or {}
+                    if upstream_cf.filename == 'feeder_receiver.cfg':
+                        up_type = 'receiver'
+                    elif up_content.get('TEAMING_HANDLER'):
+                        up_type = 'aggregator'
+                    else:
+                        up_type = 'forwarder'
+                    get_or_create_node(up_ip_real, upstream_cf.instance.name, up_type, matched_svcs)
+                    add_edge(up_ip_real, this_ip, matched_svcs)
+
+                    # 接收机是终点，不再递归
+                    if up_type != 'receiver':
+                        new_visited = visited_ips | {up_ip}
+                        process_cf(upstream_cf, new_visited)
+
+    # 入口：找所有直接包含目标消息的配置文件
     for cf in all_cfs:
         content = cf.content
         if not content or not isinstance(content, dict):
             continue
-        forwarder = content.get('MSG_FORWARDER', {})
-        upstreams = forwarder.get('UpStreams', [])
-        if not isinstance(upstreams, list):
-            continue
-        for upstream in upstreams:
-            matched = _msg_in_upstream(upstream, service_id, msg_id)
-            if matched:
-                start_nodes.append((cf, upstream.get('Address', ''), matched))
+        if _get_upstreams_from_content(content, service_id, msg_id):
+            process_cf(cf)
 
-    if not start_nodes:
-        return {'chains': [], 'nodes': {}}
+    if not nodes:
+        return {'chains': [], 'nodes': {}, 'edges': []}
 
-    # 第二步：对每个起点递归向上追溯
-    all_chains = []
-    all_nodes = {}
+    # 将图结构转换为前端可展示的链路（从根节点到叶节点的路径）
+    # 找到没有入边的节点（根节点 = 外部源）
+    all_targets = {e['to'] for e in edge_list}
+    root_ids = [nid for nid in nodes if nid not in all_targets]
 
-    def trace_upstream(cf, upstream_addr_str, matched_svcs, current_chain, visited_ips, depth):
-        """
-        递归函数：从当前节点（cf）向上追溯 upstream_addr_str 里的每个地址。
-        """
-        ip = (cf.instance.host_ip or '').strip()
-        if not ip:
-            name = cf.instance.name
-            ip = name.split('_')[0] if '_' in name else cf.instance.name
-
-        node_key = ip
-        current_node = {
-            'node': ip,
-            'instance': cf.instance.name,
-            'type': 'forwarder',
-            'services': matched_svcs,
-            'depth': depth,
-        }
-        all_nodes[node_key] = current_node
-
-        # 把当前节点加入链路
-        new_chain = [current_node] + current_chain
-
-        # 解析上游地址，递归追溯
-        upstream_addrs = _parse_upstream_addrs(upstream_addr_str)
-        found_upstream = False
-
-        for upstream_ip, upstream_port in upstream_addrs:
-            if upstream_ip in visited_ips:
+    # BFS 生成所有从根到叶的路径
+    chains = []
+    def dfs_paths(node_id, path, path_set):
+        children = [e['to'] for e in edge_list if e['from'] == node_id]
+        if not children:
+            # 叶节点，记录完整路径
+            chains.append([nodes[n] for n in path])
+            return
+        for child in children:
+            if child in path_set:
                 continue  # 防止环路
+            dfs_paths(child, path + [child], path_set | {child})
 
-            upstream_cf = ip_port_to_cf.get((upstream_ip, upstream_port))
-            if upstream_cf is None:
-                # 在已知机器里找不到，说明是外部数据源
-                source_key = f'{upstream_ip}:{upstream_port}'
-                source_node = {
-                    'node': source_key,
-                    'instance': source_key,
-                    'type': 'external',
-                    'services': matched_svcs,
-                    'depth': depth + 1,
-                }
-                all_nodes[source_key] = source_node
-                full_chain = [source_node] + new_chain
-                all_chains.append(full_chain)
-                found_upstream = True
-            else:
-                # 找到了内部转发机，继续往上追
-                upstream_content = upstream_cf.content or {}
-                upstream_forwarder = upstream_content.get('MSG_FORWARDER', {})
-                upstream_upstreams = upstream_forwarder.get('UpStreams', [])
-                new_visited = visited_ips | {upstream_ip}
-                found_next = False
-                for up in upstream_upstreams:
-                    up_matched = _msg_in_upstream(up, service_id, msg_id)
-                    if up_matched:
-                        trace_upstream(
-                            upstream_cf,
-                            up.get('Address', ''),
-                            up_matched,
-                            new_chain,
-                            new_visited,
-                            depth + 1,
-                        )
-                        found_next = True
-                if not found_next:
-                    # 上游机器存在但不转发该消息，视为接入点（源头）
-                    upstream_ip_val = (upstream_cf.instance.host_ip or '').strip()
-                    if not upstream_ip_val:
-                        name = upstream_cf.instance.name
-                        upstream_ip_val = name.split('_')[0] if '_' in name else name
-                    source_node = {
-                        'node': upstream_ip_val,
-                        'instance': upstream_cf.instance.name,
-                        'type': 'source',
-                        'services': matched_svcs,
-                        'depth': depth + 1,
-                    }
-                    all_nodes[upstream_ip_val] = source_node
-                    full_chain = [source_node] + new_chain
-                    all_chains.append(full_chain)
-                found_upstream = True
+    for root in root_ids:
+        dfs_paths(root, [root], {root})
 
-        if not found_upstream:
-            # 没有上游地址，当前节点就是源头
-            all_chains.append(new_chain)
-
-    for cf, upstream_addr, matched_svcs in start_nodes:
-        ip = (cf.instance.host_ip or '').strip()
-        if not ip:
-            name = cf.instance.name
-            ip = name.split('_')[0] if '_' in name else cf.instance.name
-        trace_upstream(cf, upstream_addr, matched_svcs, [], {ip}, 0)
-
-    # 去重链路（按节点序列去重）
+    # 去重链路
     seen = set()
     unique_chains = []
-    for chain in all_chains:
-        key = '->'.join(n['node'] for n in chain)
+    for chain in chains:
+        key = '->'.join(n['id'] for n in chain)
         if key not in seen:
             seen.add(key)
             unique_chains.append(chain)
 
-    return {'chains': unique_chains, 'nodes': all_nodes}
+    # 将节点的 id 字段同时作为旧版 'node' 字段（前端兼容）
+    for nid, nd in nodes.items():
+        nd['node'] = nd['id']
+
+    return {
+        'chains': unique_chains,
+        'nodes': nodes,
+        'edges': edge_list,
+    }
 
 
 def parse_subscriptions(sub_str, service_id, msg_id):
@@ -411,8 +498,9 @@ class ForwarderChainViewSet(viewsets.ViewSet):
                 'msg_id': msg_id,
                 'service_label': service_label,
             },
-            'chains': chain_result['chains'],   # 完整链路列表，每条从源头到末端
-            'nodes': chain_result['nodes'],     # 所有节点详情
+            'chains': chain_result['chains'],
+            'nodes': chain_result['nodes'],
+            'edges': chain_result['edges'],
             'live': live_results,
             'unreachable': unreachable,
         })

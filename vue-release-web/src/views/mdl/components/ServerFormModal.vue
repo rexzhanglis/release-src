@@ -127,45 +127,14 @@
         </el-select>
       </el-form-item>
 
-      <!-- ===== 新增时：同步创建配置实例选项 ===== -->
+      <!-- 新增时提示：配置实例可在初始化完成后创建 -->
       <template v-if="!isEdit">
         <el-divider style="margin:14px 0 10px" />
-        <el-form-item label-width="0" style="margin-bottom:8px">
-          <el-checkbox v-model="form.create_config_instance">
-            <span style="font-weight:600">同时创建配置实例并提交 Git</span>
-            <span style="color:#909399;font-size:12px;margin-left:6px">
-              在配置管理中创建对应节点，并将空配置文件提交到 GitLab
-            </span>
-          </el-checkbox>
-        </el-form-item>
-
-        <template v-if="form.create_config_instance">
-          <el-form-item label="服务类型" prop="service_type_name">
-            <el-input
-              v-model="form.service_type_name"
-              placeholder="Git 仓库一级目录，如 aliforward、forward"
-              style="width:260px"
-            />
-            <span style="margin-left:8px;color:#909399;font-size:12px">对应配置管理树的顶级节点</span>
-          </el-form-item>
-
-          <el-form-item label="实例名称" prop="instance_name">
-            <el-input
-              v-model="form.instance_name"
-              placeholder="如 10_121_21_240_19015"
-              style="width:260px"
-            />
-            <span style="margin-left:8px;color:#909399;font-size:12px">Git 仓库二级目录，通常为 IP_端口</span>
-          </el-form-item>
-
-          <el-form-item label="Commit 说明">
-            <el-input
-              v-model="form.commit_message"
-              placeholder="留空自动生成"
-              style="width:340px"
-            />
-          </el-form-item>
-        </template>
+        <el-alert type="info" :closable="false" style="font-size:12px">
+          <i class="el-icon-info-outline" />
+          保存后可点击「立即初始化」完成系统环境配置。<br>
+          初始化完成后，系统将引导您创建对应的配置管理实例。
+        </el-alert>
       </template>
     </el-form>
 
@@ -218,11 +187,6 @@ const DEFAULT_FORM = () => ({
   consul_files: 'feeder_handler.cfg',
   config_git_url: '',
   label_ids: [],
-  // 新增时额外字段
-  create_config_instance: true,
-  service_type_name: '',
-  instance_name: '',
-  commit_message: '',
 })
 
 export default {
@@ -254,20 +218,6 @@ export default {
         service_name: [{ required: true, message: '请填写服务名', trigger: 'blur' }],
         install_dir:  [{ required: true, message: '请填写安装目录', trigger: 'blur' }],
         backups_dir:  [{ required: true, message: '请填写备份目录', trigger: 'blur' }],
-        service_type_name: [{
-          validator: (rule, val, cb) => {
-            if (this.form.create_config_instance && !(val || '').trim()) {
-              cb(new Error('请填写服务类型'))
-            } else { cb() }
-          }, trigger: 'blur'
-        }],
-        instance_name: [{
-          validator: (rule, val, cb) => {
-            if (this.form.create_config_instance && !(val || '').trim()) {
-              cb(new Error('请填写实例名称'))
-            } else { cb() }
-          }, trigger: 'blur'
-        }],
       },
     }
   },
@@ -324,10 +274,6 @@ export default {
           consul_files: s.consul_files || 'feeder_handler.cfg',
           config_git_url: s.config_git_url || '',
           label_ids: (s.labels || []).map(l => l.id),
-          create_config_instance: false,
-          service_type_name: '',
-          instance_name: '',
-          commit_message: '',
         }
       } else {
         this.form = DEFAULT_FORM()
@@ -339,15 +285,6 @@ export default {
       this.$nextTick(() => {
         if (this.$refs.form) this.$refs.form.clearValidate()
       })
-    },
-    // IP / 角色名变化时自动填充实例名和服务类型（辅助提示，用户可覆盖）
-    autoFillConfig() {
-      if (this.form.ip && !this.form.instance_name) {
-        this.form.instance_name = this.form.ip.replace(/\./g, '_')
-      }
-      if (this.form.role_name && !this.form.service_type_name) {
-        this.form.service_type_name = this.form.role_name
-      }
     },
     handleInitNow() {
       this.$emit('init-after-create', this.createdServer)
@@ -368,36 +305,15 @@ export default {
           this.$emit('success')
           this.dialogVisible = false
         } else {
-          const res = await createMdlServer({
-            ...this.form,
-            git_commit: this.form.create_config_instance,
-          })
+          const res = await createMdlServer(this.form)
           const data = (res.data && res.data.data) || {}
 
-          // 构建结果详情
-          const details = []
-          if (data.config_instance) {
-            if (data.config_instance.error) {
-              details.push(`⚠ 配置实例创建失败: ${data.config_instance.error}`)
-            } else {
-              details.push(`✓ 配置实例: ${data.config_instance.service_type}/${data.config_instance.name}`)
-              details.push(`✓ 配置文件: ${(data.config_instance.files || []).join(', ')}`)
-            }
-          }
-          if (data.git) {
-            const gitOk = data.git.results && data.git.results.every(r => r.status === 'ok')
-            details.push(`${gitOk ? '✓' : '⚠'} Git: ${data.git.message}`)
-          }
-
-          const hasError = !!(data.config_instance && data.config_instance.error) ||
-            !!(data.git && data.git.results && data.git.results.some(r => r.status !== 'ok'))
-
           this.submitResult = {
-            type: hasError ? 'warning' : 'success',
-            title: hasError ? '服务器已新增，但部分步骤失败' : '新增成功',
-            details,
+            type: 'success',
+            title: '新增成功',
+            details: [],
           }
-          this.createdServer = data.server || null
+          this.createdServer = data.server || data || null
           this.$emit('success')
         }
       } catch (e) {

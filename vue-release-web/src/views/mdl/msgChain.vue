@@ -32,8 +32,8 @@
       <el-row :gutter="12" style="margin-bottom:16px">
         <el-col :span="6">
           <el-card shadow="never" class="stat-card">
-            <div class="stat-num" style="color:#409eff">{{ result.chains.length }}</div>
-            <div class="stat-desc">条完整链路</div>
+            <div class="stat-num" style="color:#409eff">{{ result.edges ? result.edges.length : result.chains.length }}</div>
+            <div class="stat-desc">条转发路径</div>
           </el-card>
         </el-col>
         <el-col :span="6">
@@ -56,38 +56,69 @@
         </el-col>
       </el-row>
 
-      <!-- 完整链路 -->
+      <!-- 拓扑图 -->
       <el-card shadow="never" style="margin-bottom:16px">
         <div slot="header" class="card-header">
-          <i class="el-icon-sort" style="color:#409eff" />
-          <span>完整转发链路（配置文件追溯）</span>
-          <el-tag size="mini" type="info" style="margin-left:8px">从源头到转发机</el-tag>
+          <i class="el-icon-share" style="color:#409eff" />
+          <span>转发拓扑图（配置文件追溯）</span>
+          <el-tag size="mini" type="info" style="margin-left:8px">从外部源 → 转发机</el-tag>
         </div>
 
-        <div v-if="result.chains.length === 0" class="empty-tip">
+        <div v-if="topoLayers.length === 0" class="empty-tip">
           未找到包含该消息的配置
         </div>
 
-        <div v-for="(chain, ci) in result.chains" :key="ci" class="chain-row">
-          <span class="chain-index">链路 {{ ci + 1 }}</span>
-          <div class="chain-nodes">
-            <template v-for="(node, ni) in chain">
-              <!-- 节点 -->
-              <div :key="'n' + ni" class="chain-node" :class="nodeClass(node)">
+        <!-- 按层展示：每层横向排节点，层间用箭头连接 -->
+        <div v-else class="topo-container">
+          <div v-for="(layer, li) in topoLayers" :key="li" class="topo-row">
+            <!-- 层标题 -->
+            <div class="topo-layer-label">{{ layerLabel(li, topoLayers.length, layer) }}</div>
+            <!-- 节点区 -->
+            <div class="topo-nodes">
+              <div
+                v-for="node in layer"
+                :key="node.id"
+                class="chain-node"
+                :class="nodeClass(node)"
+              >
                 <div class="node-type-tag">{{ nodeTypeLabel(node) }}</div>
                 <div class="node-ip">{{ node.node }}</div>
                 <div class="node-instance" :title="node.instance">{{ node.instance }}</div>
                 <div v-if="node.services && node.services.length" class="node-services">
                   <el-tag
-                    v-for="s in node.services" :key="s.service_name"
+                    v-for="s in node.services" :key="s.msg_label"
                     size="mini" type="primary" style="margin:1px 1px 0 0"
                   >{{ s.msg_label }}</el-tag>
                 </div>
               </div>
-              <!-- 箭头 -->
-              <div v-if="ni < chain.length - 1" :key="'a' + ni" class="chain-arrow">→</div>
-            </template>
+            </div>
+            <!-- 层间箭头（不在最后一层显示） -->
+            <div v-if="li < topoLayers.length - 1" class="topo-arrow-row">
+              <span class="topo-arrow">↓</span>
+            </div>
           </div>
+
+          <!-- 边明细（折叠展示，辅助理解多对多关系） -->
+          <el-collapse style="margin-top:12px">
+            <el-collapse-item name="edges">
+              <template slot="title">
+                <span style="font-size:12px;color:#909399">
+                  <i class="el-icon-connection" /> 查看连接明细（{{ result.edges && result.edges.length || 0 }} 条边）
+                </span>
+              </template>
+              <div v-if="result.edges && result.edges.length" class="edge-list">
+                <div v-for="(e, i) in result.edges" :key="i" class="edge-item">
+                  <span class="mono">{{ e.from }}</span>
+                  <span class="edge-arrow"> → </span>
+                  <span class="mono">{{ e.to }}</span>
+                  <el-tag
+                    v-for="s in e.services" :key="s.msg_label"
+                    size="mini" type="info" style="margin-left:4px"
+                  >{{ s.msg_label }}</el-tag>
+                </div>
+              </div>
+            </el-collapse-item>
+          </el-collapse>
         </div>
       </el-card>
 
@@ -157,6 +188,61 @@ import { queryMsgChain, getServices } from '@/api/forwarderChain'
 
 export default {
   name: 'MsgChain',
+  computed: {
+    /**
+     * 将 nodes + edges 转为分层数组，用于拓扑图展示。
+     * 使用拓扑排序（Kahn 算法）按层分组。
+     */
+    topoLayers() {
+      if (!this.result || !this.result.nodes) return []
+      const nodes = this.result.nodes   // { id: node }
+      const edges = this.result.edges || []
+
+      if (!Object.keys(nodes).length) return []
+
+      // 构建入度表和邻接表
+      const inDegree = {}
+      const children = {}  // from -> [to]
+      for (const nid of Object.keys(nodes)) {
+        inDegree[nid] = 0
+        children[nid] = []
+      }
+      for (const e of edges) {
+        if (!(e.to in inDegree)) inDegree[e.to] = 0
+        if (!(e.from in children)) children[e.from] = []
+        inDegree[e.to]++
+        children[e.from].push(e.to)
+      }
+
+      // Kahn 分层
+      const layers = []
+      let queue = Object.keys(inDegree).filter(id => inDegree[id] === 0)
+      const visited = new Set()
+
+      while (queue.length) {
+        layers.push(queue.map(id => nodes[id]).filter(Boolean))
+        queue.forEach(id => visited.add(id))
+        const next = []
+        for (const id of queue) {
+          for (const child of (children[id] || [])) {
+            inDegree[child]--
+            if (inDegree[child] === 0 && !visited.has(child)) {
+              next.push(child)
+            }
+          }
+        }
+        queue = next
+      }
+
+      // 如果有孤立节点（无边）也加入
+      const remaining = Object.keys(nodes).filter(id => !visited.has(id))
+      if (remaining.length) {
+        layers.push(remaining.map(id => nodes[id]).filter(Boolean))
+      }
+
+      return layers
+    },
+  },
   data() {
     return {
       serviceList: [],
@@ -209,16 +295,33 @@ export default {
       }
     },
 
+    layerLabel(li, total, layer) {
+      if (li === total - 1) return '末端转发机'
+      if (li === 0) {
+        const types = (layer || []).map(n => n.type)
+        if (types.every(t => t === 'external')) return '外部源（交易所）'
+        if (types.every(t => t === 'receiver')) return '接收机'
+        return '源端'
+      }
+      return `中间层 ${li}`
+    },
+
     nodeClass(node) {
       return {
-        'node-external': node.type === 'external',
-        'node-source': node.type === 'source',
-        'node-forwarder': node.type === 'forwarder',
+        'node-external':    node.type === 'external',
+        'node-receiver':    node.type === 'receiver',
+        'node-forwarder':   node.type === 'forwarder',
+        'node-aggregator':  node.type === 'aggregator',
       }
     },
 
     nodeTypeLabel(node) {
-      return { external: '外部源', source: '接入层', forwarder: '转发机' }[node.type] || node.type
+      return {
+        external:   '外部源',
+        receiver:   '接收机',
+        forwarder:  '转发机',
+        aggregator: '聚合转发',
+      }[node.type] || node.type
     },
   },
 }
@@ -240,37 +343,57 @@ export default {
 .empty-placeholder { text-align: center; padding: 80px 0; }
 .mono { font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; }
 
-/* 链路行 */
-.chain-row {
+/* 拓扑图容器 */
+.topo-container {
+  padding: 4px 0;
+}
+.topo-row {
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
-  margin-bottom: 12px;
-  padding: 10px;
-  background: #fafafa;
-  border-radius: 4px;
-  border: 1px solid #ebeef5;
-  overflow-x: auto;
 }
-.chain-index {
-  font-size: 12px;
+.topo-layer-label {
+  font-size: 11px;
   color: #909399;
-  white-space: nowrap;
-  min-width: 42px;
-  padding-top: 18px;
-  margin-right: 8px;
+  margin-bottom: 6px;
+  padding-left: 4px;
+  border-left: 3px solid #dcdfe6;
+  padding-left: 6px;
 }
-.chain-nodes {
+.topo-nodes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.topo-arrow-row {
   display: flex;
   align-items: center;
-  flex-wrap: nowrap;
-  gap: 0;
+  padding: 2px 0 2px 20px;
+  margin-bottom: 4px;
 }
-.chain-arrow {
-  font-size: 18px;
+.topo-arrow {
+  font-size: 20px;
   color: #c0c4cc;
-  padding: 0 6px;
-  margin-top: 10px;
-  flex-shrink: 0;
+}
+
+/* 边明细 */
+.edge-list {
+  max-height: 200px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+.edge-item {
+  padding: 3px 0;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+.edge-arrow {
+  color: #c0c4cc;
+  margin: 0 2px;
 }
 
 /* 节点 */
@@ -288,13 +411,17 @@ export default {
   border-color: #f56c6c;
   background: #fef0f0;
 }
-.node-source {
+.node-receiver {
   border-color: #e6a23c;
   background: #fdf6ec;
 }
 .node-forwarder {
   border-color: #409eff;
   background: #ecf5ff;
+}
+.node-aggregator {
+  border-color: #67c23a;
+  background: #f0f9eb;
 }
 .node-type-tag {
   font-size: 10px;
@@ -305,9 +432,10 @@ export default {
   display: inline-block;
   margin-bottom: 3px;
 }
-.node-external .node-type-tag  { background: #f56c6c; }
-.node-source .node-type-tag    { background: #e6a23c; }
-.node-forwarder .node-type-tag { background: #409eff; }
+.node-external .node-type-tag   { background: #f56c6c; }
+.node-receiver .node-type-tag   { background: #e6a23c; }
+.node-forwarder .node-type-tag  { background: #409eff; }
+.node-aggregator .node-type-tag { background: #67c23a; }
 .node-ip {
   font-family: monospace;
   font-size: 11px;

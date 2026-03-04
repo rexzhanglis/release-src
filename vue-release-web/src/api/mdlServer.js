@@ -45,3 +45,11 @@ export function createLabel(data) {
 export function deleteLabel(id) {
   return request({ url: `/mdl-labels/${id}/`, method: 'delete' })
 }
+
+export function getSystemdServices(id) {
+  return request({ url: `/mdl-servers/${id}/systemd_services/`, method: 'get' })
+}
+
+export function controlSystemdService(id, data) {
+  return request({ url: `/mdl-servers/${id}/systemd_control/`, method: 'post', data })
+}

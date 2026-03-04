@@ -369,3 +369,147 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 {'code': 404, 'message': '任务不存在'},
                 status=drf_status.HTTP_404_NOT_FOUND
             )
+
+    @action(detail=True, methods=['get'], url_path='systemd_services')
+    def systemd_services(self, request, pk=None):
+        """
+        获取服务器上的 systemd service 列表及其状态。
+        通过 Ansible 在远端执行：systemctl list-units --type=service --all --plain --no-legend
+        返回：[{name, load_state, active_state, sub_state, description, enabled}, ...]
+        """
+        server = self.get_object()
+        if server.init_status not in ('ready',):
+            return Response(
+                {'code': 400, 'message': '服务器尚未初始化完成，无法查询 systemd 服务'},
+                status=drf_status.HTTP_400_BAD_REQUEST
+            )
+        try:
+            ssh_pass = ''
+            try:
+                ssh_pass = Constance.get_value('ansible_ssh_pass') or ''
+            except Exception:
+                pass
+
+            import subprocess as _sp
+            import tempfile as _tf
+            tmpdir = _tf.mkdtemp(prefix='mdl_systemd_')
+            hosts_path = os.path.join(tmpdir, 'hosts')
+            with open(hosts_path, 'w') as f:
+                f.write(f"release ansible_ssh_host={server.ip} "
+                        f"ansible_ssh_user={server.user or 'root'} "
+                        f"ansible_ssh_pass={ssh_pass}\n")
+
+            env = os.environ.copy()
+            env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
+
+            # list-units 获取运行状态
+            proc = _sp.run(
+                ['ansible', 'release', '-i', hosts_path, '-m', 'shell',
+                 '-a', 'systemctl list-units --type=service --all --plain --no-legend 2>/dev/null'],
+                stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
+            )
+            services = []
+            if proc.returncode == 0:
+                for line in proc.stdout.splitlines():
+                    line = line.strip()
+                    if not line or line.startswith('UNIT') or '>>>' in line:
+                        continue
+                    # 跳过 ansible 输出的头部（release | CHANGED | rc=0 >>）
+                    if '|' in line and 'rc=' in line:
+                        continue
+                    parts = line.split(None, 4)
+                    if len(parts) >= 4:
+                        services.append({
+                            'name': parts[0],
+                            'load_state': parts[1],
+                            'active_state': parts[2],
+                            'sub_state': parts[3],
+                            'description': parts[4] if len(parts) > 4 else '',
+                            'enabled': None,  # 稍后查
+                        })
+
+            # is-enabled 查自启动状态（仅对 load=loaded 的服务）
+            loaded = [s for s in services if s['load_state'] == 'loaded']
+            if loaded:
+                names = ' '.join(s['name'] for s in loaded)
+                proc2 = _sp.run(
+                    ['ansible', 'release', '-i', hosts_path, '-m', 'shell',
+                     '-a', f'systemctl is-enabled {names} 2>/dev/null || true'],
+                    stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
+                )
+                if proc2.returncode == 0:
+                    enabled_lines = [
+                        l.strip() for l in proc2.stdout.splitlines()
+                        if l.strip() and '|' not in l and 'rc=' not in l
+                    ]
+                    for i, svc in enumerate(loaded):
+                        if i < len(enabled_lines):
+                            svc['enabled'] = enabled_lines[i].strip()
+
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            return ApiResponse(data={'services': services, 'ip': server.ip})
+
+        except Exception as e:
+            return Response(
+                {'code': 500, 'message': str(e)},
+                status=drf_status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'], url_path='systemd_control')
+    def systemd_control(self, request, pk=None):
+        """
+        控制 systemd 服务：enable/disable/start/stop/restart
+        请求体：{ "service": "mdl-forward.service", "action": "enable" }
+        """
+        server = self.get_object()
+        service = (request.data.get('service') or '').strip()
+        ctrl_action = (request.data.get('action') or '').strip()
+        ALLOWED = ('start', 'stop', 'restart', 'enable', 'disable', 'reload')
+        if not service or ctrl_action not in ALLOWED:
+            return Response(
+                {'code': 400, 'message': f'service 和 action 必填，action 可选值：{", ".join(ALLOWED)}'},
+                status=drf_status.HTTP_400_BAD_REQUEST
+            )
+        try:
+            ssh_pass = ''
+            try:
+                ssh_pass = Constance.get_value('ansible_ssh_pass') or ''
+            except Exception:
+                pass
+
+            import subprocess as _sp
+            import tempfile as _tf
+            tmpdir = _tf.mkdtemp(prefix='mdl_systemd_ctrl_')
+            hosts_path = os.path.join(tmpdir, 'hosts')
+            with open(hosts_path, 'w') as f:
+                f.write(f"release ansible_ssh_host={server.ip} "
+                        f"ansible_ssh_user={server.user or 'root'} "
+                        f"ansible_ssh_pass={ssh_pass}\n")
+
+            env = os.environ.copy()
+            env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
+
+            if ctrl_action in ('enable', 'disable'):
+                cmd = f'systemctl {ctrl_action} {service}'
+            else:
+                cmd = f'systemctl {ctrl_action} {service}'
+
+            proc = _sp.run(
+                ['ansible', 'release', '-i', hosts_path, '-m', 'shell',
+                 '-a', cmd, '--become'],
+                stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
+            )
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+            ok = proc.returncode == 0
+            return ApiResponse(data={
+                'ok': ok,
+                'output': proc.stdout or proc.stderr,
+                'action': ctrl_action,
+                'service': service,
+            })
+        except Exception as e:
+            return Response(
+                {'code': 500, 'message': str(e)},
+                status=drf_status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

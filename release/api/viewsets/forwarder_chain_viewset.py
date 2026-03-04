@@ -8,6 +8,7 @@
 import concurrent.futures
 
 import requests as http_requests
+from django.db import close_old_connections
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework import viewsets, status as drf_status
@@ -659,6 +660,8 @@ class ForwarderChainViewSet(viewsets.ViewSet):
         # build_chain 包含大量 ORM 查询，search_heartbeat 在主线程预查端口后子线程只做 HTTP
         # 先串行执行 build_chain（主线程 ORM），再并发 fetch heartbeat（子线程纯 HTTP）
         chain_result = build_chain(service_id, msg_id)
+        # build_chain 耗时较长，之后 MySQL 连接可能已超时，主动关闭旧连接
+        close_old_connections()
         live_results, unreachable = search_heartbeat(service_id, msg_id)
 
         service_label = SERVICE_ID_MAP.get(service_id, '') if service_id else ''

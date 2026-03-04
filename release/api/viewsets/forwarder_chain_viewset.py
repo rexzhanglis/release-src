@@ -489,16 +489,14 @@ def _get_http_port(ip):
     return HEARTBEAT_PORT
 
 
-def fetch_heartbeat(server):
-    ip = server.ip
-    port = _get_http_port(ip)
+def fetch_heartbeat(ip, fqdn, port):
     url = f'http://{ip}:{port}/heartbeat?ss=1'
     try:
         resp = http_requests.get(url, timeout=HEARTBEAT_TIMEOUT)
         resp.raise_for_status()
-        return ip, server.fqdn, resp.json(), None
+        return ip, fqdn, resp.json(), None
     except Exception as e:
-        return ip, server.fqdn, None, str(e)
+        return ip, fqdn, None, str(e)
 
 
 def search_heartbeat(service_id, msg_id):
@@ -506,13 +504,22 @@ def search_heartbeat(service_id, msg_id):
     if not servers:
         return [], []
 
+    # 在主线程预先查好每台服务器的 HttpPort，避免子线程中查库引发 OperationalError
+    server_infos = [(s.ip, s.fqdn, _get_http_port(s.ip)) for s in servers]
+
     results = []
     unreachable = []
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        futures = {executor.submit(fetch_heartbeat, s): s for s in servers}
+        futures = {executor.submit(fetch_heartbeat, ip, fqdn, port): (ip, fqdn)
+                   for ip, fqdn, port in server_infos}
         for future in concurrent.futures.as_completed(futures):
-            ip, fqdn, data, err = future.result()
+            try:
+                ip, fqdn, data, err = future.result()
+            except Exception as e:
+                ip, fqdn = futures[future]
+                unreachable.append({'ip': ip, 'fqdn': fqdn, 'error': str(e)})
+                continue
             if err or not data:
                 unreachable.append({'ip': ip, 'fqdn': fqdn, 'error': err or '无响应'})
                 continue
@@ -618,11 +625,10 @@ class ForwarderChainViewSet(viewsets.ViewSet):
             )
         service_id, msg_id = parsed
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            f_chain = executor.submit(build_chain, service_id, msg_id)
-            f_live = executor.submit(search_heartbeat, service_id, msg_id)
-            chain_result = f_chain.result()
-            live_results, unreachable = f_live.result()
+        # build_chain 包含大量 ORM 查询，search_heartbeat 在主线程预查端口后子线程只做 HTTP
+        # 先串行执行 build_chain（主线程 ORM），再并发 fetch heartbeat（子线程纯 HTTP）
+        chain_result = build_chain(service_id, msg_id)
+        live_results, unreachable = search_heartbeat(service_id, msg_id)
 
         service_label = SERVICE_ID_MAP.get(service_id, '') if service_id else ''
 

@@ -207,13 +207,15 @@ class MdlServerViewSet(viewsets.ModelViewSet):
         """
         server = self.get_object()
         try:
-            ssh_user = (request.data.get('ssh_user') or '').strip() or server.user or 'root'
+            ssh_user = (request.data.get('ssh_user') or '').strip() or server.user or os.environ.get('ANSIBLE_SSH_USER', 'root')
             ssh_pass = request.data.get('ssh_pass', '').strip()
             if not ssh_pass:
                 try:
                     ssh_pass = Constance.get_value('ansible_ssh_pass') or ''
                 except Exception:
                     ssh_pass = ''
+            if not ssh_pass:
+                ssh_pass = os.environ.get('ANSIBLE_SSH_PASS', '')
 
             operator = request.user.username if request.user.is_authenticated else 'unknown'
 
@@ -389,6 +391,9 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 ssh_pass = Constance.get_value('ansible_ssh_pass') or ''
             except Exception:
                 pass
+            if not ssh_pass:
+                ssh_pass = os.environ.get('ANSIBLE_SSH_PASS', '')
+            ssh_user = server.user or os.environ.get('ANSIBLE_SSH_USER', 'root')
 
             import subprocess as _sp
             import tempfile as _tf
@@ -396,7 +401,7 @@ class MdlServerViewSet(viewsets.ModelViewSet):
             hosts_path = os.path.join(tmpdir, 'hosts')
             with open(hosts_path, 'w') as f:
                 f.write(f"release ansible_ssh_host={server.ip} "
-                        f"ansible_ssh_user={server.user or 'root'} "
+                        f"ansible_ssh_user={ssh_user} "
                         f"ansible_ssh_pass={ssh_pass}\n")
 
             env = os.environ.copy()
@@ -481,6 +486,9 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 ssh_pass = Constance.get_value('ansible_ssh_pass') or ''
             except Exception:
                 pass
+            if not ssh_pass:
+                ssh_pass = os.environ.get('ANSIBLE_SSH_PASS', '')
+            ssh_user = server.user or os.environ.get('ANSIBLE_SSH_USER', 'root')
 
             import subprocess as _sp
             import tempfile as _tf
@@ -488,7 +496,7 @@ class MdlServerViewSet(viewsets.ModelViewSet):
             hosts_path = os.path.join(tmpdir, 'hosts')
             with open(hosts_path, 'w') as f:
                 f.write(f"release ansible_ssh_host={server.ip} "
-                        f"ansible_ssh_user={server.user or 'root'} "
+                        f"ansible_ssh_user={ssh_user} "
                         f"ansible_ssh_pass={ssh_pass}\n")
 
             env = os.environ.copy()

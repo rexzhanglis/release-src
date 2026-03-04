@@ -402,52 +402,54 @@ class MdlServerViewSet(viewsets.ModelViewSet):
             env = os.environ.copy()
             env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
 
-            # list-units 获取运行状态
-            proc = _sp.run(
-                ['ansible', 'release', '-i', hosts_path, '-m', 'shell',
-                 '-a', 'systemctl list-units --type=service --all --plain --no-legend 2>/dev/null'],
-                stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
-            )
-            def _strip_ansible_header(output):
-                """提取 Ansible shell 模块输出中 >> 之后的实际内容"""
-                idx = output.find('>>\n')
+            def _extract_cmd_output(output):
+                """从 Ansible shell 输出中提取实际命令内容（>> 之后的部分）"""
+                # Ansible 头部格式: "hostname | CHANGED | rc=0 >>"
+                # 找最后一个 ">>" 后的换行
+                idx = output.find('>>')
                 if idx != -1:
-                    return output[idx + 3:]
+                    rest = output[idx + 2:]
+                    # 跳过紧跟的空白/换行
+                    return rest.lstrip('\r\n ')
                 return output
 
-            services = []
-            if proc.returncode == 0:
-                raw = _strip_ansible_header(proc.stdout)
-                for line in raw.splitlines():
-                    line = line.strip()
-                    if not line:
-                        continue
-                    parts = line.split(None, 4)
-                    if len(parts) >= 4 and parts[0].endswith('.service'):
-                        services.append({
-                            'name': parts[0],
-                            'load_state': parts[1],
-                            'active_state': parts[2],
-                            'sub_state': parts[3],
-                            'description': parts[4] if len(parts) > 4 else '',
-                            'enabled': None,  # 稍后查
-                        })
+            # 只查 mdl- 开头的服务，避免处理大量无关服务
+            cmd = 'systemctl list-units "mdl-*.service" --all --plain --no-legend 2>/dev/null'
+            proc = _sp.run(
+                ['ansible', 'release', '-i', hosts_path, '-m', 'shell', '-a', cmd],
+                stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
+            )
 
-            # is-enabled 查自启动状态（仅对 load=loaded 的服务）
-            loaded = [s for s in services if s['load_state'] == 'loaded']
-            if loaded:
-                names = ' '.join(s['name'] for s in loaded)
+            services = []
+            raw = _extract_cmd_output(proc.stdout)
+            for line in raw.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split(None, 4)
+                if len(parts) >= 4 and parts[0].startswith('mdl-') and parts[0].endswith('.service'):
+                    services.append({
+                        'name': parts[0],
+                        'load_state': parts[1],
+                        'active_state': parts[2],
+                        'sub_state': parts[3],
+                        'description': parts[4] if len(parts) > 4 else '',
+                        'enabled': None,
+                    })
+
+            # is-enabled 查自启动状态
+            if services:
+                names = ' '.join(s['name'] for s in services)
                 proc2 = _sp.run(
                     ['ansible', 'release', '-i', hosts_path, '-m', 'shell',
                      '-a', f'systemctl is-enabled {names} 2>/dev/null || true'],
                     stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
                 )
-                if proc2.returncode == 0:
-                    raw2 = _strip_ansible_header(proc2.stdout)
-                    enabled_lines = [l.strip() for l in raw2.splitlines() if l.strip()]
-                    for i, svc in enumerate(loaded):
-                        if i < len(enabled_lines):
-                            svc['enabled'] = enabled_lines[i].strip()
+                raw2 = _extract_cmd_output(proc2.stdout)
+                enabled_lines = [l.strip() for l in raw2.splitlines() if l.strip()]
+                for i, svc in enumerate(services):
+                    if i < len(enabled_lines):
+                        svc['enabled'] = enabled_lines[i]
 
             shutil.rmtree(tmpdir, ignore_errors=True)
             return ApiResponse(data={'services': services, 'ip': server.ip})

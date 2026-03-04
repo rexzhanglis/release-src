@@ -88,19 +88,18 @@ def _build_ip_to_config_map():
         filename__in=['feeder_handler.cfg', 'feeder_receiver.cfg']
     ).select_related('instance'))
 
-    ip_to_cf = {}       # ip -> cf（一台机器只有一个主 IP）
+    ip_to_cf = {}       # ip -> cf
     ip_port_to_cf = {}  # (ip, port) -> cf
-    receiver_ip_set = set()  # 已知接收机 IP 集合
+    port_to_cfs = {}    # port -> [cf, ...]  当 IP 解析失败时的兜底索引
+    receiver_ip_set = set()
 
-    handler_cfs = []  # 只含 feeder_handler.cfg 的列表
+    handler_cfs = []
 
     for cf in all_cfs:
         # 从 instance.host_ip 或 instance.name 解析 IP
         ip = (cf.instance.host_ip or '').strip()
         if not ip:
             name = cf.instance.name
-            # 格式可能是 "bjs_10.51.201.209" 或 "10.121.21.240_19015"
-            # 尝试找最后一段像IP的部分
             parts = name.replace('-', '_').split('_')
             for p in reversed(parts):
                 if p.count('.') == 3:
@@ -109,54 +108,57 @@ def _build_ip_to_config_map():
             if not ip:
                 ip = name.split('_')[0] if '_' in name else name
 
+        def _index_publisher_ports(cf_, ip_, content_):
+            """
+            从配置内容中提取 Publishers 端口，建立索引。
+            实际配置结构：content['feeder_handler']['Publishers'] 或
+                         content['feeder_receiver']['Publishers']
+            也兼容直接挂在顶层的情况。
+            """
+            # 收集所有可能存放 Publishers 的位置
+            candidates = []
+            for section_key in ('feeder_handler', 'feeder_receiver'):
+                section = content_.get(section_key)
+                if isinstance(section, dict):
+                    candidates.append(section.get('Publishers', []))
+            # 兼容直接挂顶层的情况
+            if 'Publishers' in content_ and isinstance(content_['Publishers'], list):
+                candidates.append(content_['Publishers'])
+
+            for publishers in candidates:
+                for pub in publishers:
+                    addr = pub.get('Address', '')
+                    if ':' in addr:
+                        port_str = addr.split(':')[-1]
+                        try:
+                            port = int(port_str)
+                            if ip_:
+                                ip_port_to_cf[(ip_, port)] = cf_
+                            port_to_cfs.setdefault(port, []).append(cf_)
+                        except ValueError:
+                            pass
+
         if cf.filename == 'feeder_receiver.cfg':
-            # 接收机：记录其 IP，并加入 ip_port_to_cf（让上游追溯时能找到它）
             if ip:
                 receiver_ip_set.add(ip)
                 ip_to_cf[ip] = cf
-
-                # 用 instance.port 建立端口索引（最可靠）
                 inst_port = cf.instance.port
                 if inst_port:
                     ip_port_to_cf[(ip, inst_port)] = cf
-
-                # 从配置内容 Publishers 建立端口索引
-                # feeder_receiver.cfg 的顶层 key 可能是 feeder_receiver 或 feeder_handler
-                content = cf.content
-                if content and isinstance(content, dict):
-                    for top_key in ('feeder_receiver', 'feeder_handler'):
-                        publishers = content.get(top_key, {}).get('Publishers', [])
-                        for pub in publishers:
-                            addr = pub.get('Address', '')
-                            if ':' in addr:
-                                port_str = addr.split(':')[-1]
-                                try:
-                                    port = int(port_str)
-                                    ip_port_to_cf[(ip, port)] = cf
-                                except ValueError:
-                                    pass
+                    port_to_cfs.setdefault(inst_port, []).append(cf)
+            content = cf.content
+            if content and isinstance(content, dict):
+                _index_publisher_ports(cf, ip, content)
         else:
-            # feeder_handler.cfg — 转发机/聚合机
             handler_cfs.append(cf)
             if ip:
                 ip_to_cf[ip] = cf
-
             content = cf.content
             if not content or not isinstance(content, dict):
                 continue
-            publishers = content.get('feeder_handler', {}).get('Publishers', [])
-            for pub in publishers:
-                addr = pub.get('Address', '')
-                if ':' in addr:
-                    port_str = addr.split(':')[-1]
-                    try:
-                        port = int(port_str)
-                        if ip:
-                            ip_port_to_cf[(ip, port)] = cf
-                    except ValueError:
-                        pass
+            _index_publisher_ports(cf, ip, content)
 
-    return ip_to_cf, ip_port_to_cf, handler_cfs, receiver_ip_set
+    return ip_to_cf, ip_port_to_cf, port_to_cfs, handler_cfs, receiver_ip_set
 
 
 def _parse_upstream_addrs(address_str):
@@ -183,15 +185,29 @@ def _parse_upstream_addrs(address_str):
 def _get_upstreams_from_content(content, service_id, msg_id):
     """
     从配置文件内容中提取包含目标消息的上游地址列表。
-    同时检查 MSG_FORWARDER 和 TEAMING_HANDLER 两种 handler。
+    支持两种结构：
+      1. 顶层 UpStreams: { "UpStreams": [...], "Publishers": [...] }
+      2. 嵌套在 MSG_FORWARDER / TEAMING_HANDLER 下
     返回 [(address_str, matched_services), ...]
     """
     results = []
+
+    # 收集所有 UpStreams 列表
+    # 实际结构：content['MSG_FORWARDER']['UpStreams'] 或 content['TEAMING_HANDLER']['UpStreams']
+    # 兼容直接挂顶层的情况
+    upstream_lists = []
     for handler_key in ('MSG_FORWARDER', 'TEAMING_HANDLER'):
         handler = content.get(handler_key, {})
-        if not isinstance(handler, dict):
-            continue
-        for upstream in handler.get('UpStreams', []):
+        if isinstance(handler, dict):
+            ups = handler.get('UpStreams', [])
+            if ups:
+                upstream_lists.append(ups)
+    # 兼容直接挂顶层
+    if not upstream_lists and 'UpStreams' in content and isinstance(content['UpStreams'], list):
+        upstream_lists.append(content['UpStreams'])
+
+    for upstreams in upstream_lists:
+        for upstream in upstreams:
             matched = []
             for svc in upstream.get('Services', []):
                 svc_name = svc.get('Name', '')
@@ -252,7 +268,7 @@ def build_chain(service_id, msg_id):
       'chains': [...],   # 保留向后兼容的链路列表（用于前端展示）
     }
     """
-    ip_to_cf, ip_port_to_cf, all_cfs, receiver_ip_set = _build_ip_to_config_map()
+    ip_to_cf, ip_port_to_cf, port_to_cfs, all_cfs, receiver_ip_set = _build_ip_to_config_map()
 
     nodes = {}   # node_id -> node_info
     edges = set()  # (from_id, to_id) 去重
@@ -321,13 +337,22 @@ def build_chain(service_id, msg_id):
 
             upstream_addrs = _parse_upstream_addrs(addr_str)
             for up_ip, up_port in upstream_addrs:
+                # 127.0.0.1 表示本机，替换为当前配置文件所在机器的真实 IP
+                if up_ip in ('127.0.0.1', '0.0.0.0', 'localhost'):
+                    up_ip = this_ip
                 if up_ip in visited_ips:
                     continue
 
                 upstream_cf = ip_port_to_cf.get((up_ip, up_port))
-                # 端口未命中时，尝试用 IP 兜底查找（端口可能未在配置里声明）
+                # IP+端口未命中，尝试仅用 IP 查（端口不同但同一台机器）
                 if upstream_cf is None:
                     upstream_cf = ip_to_cf.get(up_ip)
+                # IP 也解析不到时，仅凭端口匹配（实例名不含 IP 的情况）
+                if upstream_cf is None:
+                    candidates = port_to_cfs.get(up_port, [])
+                    if len(candidates) == 1:
+                        upstream_cf = candidates[0]
+                    # 多个候选时无法确定，放弃（仍走外部源逻辑）
 
                 if upstream_cf is None:
                     if up_ip in receiver_ip_set:
@@ -342,7 +367,7 @@ def build_chain(service_id, msg_id):
                         add_edge(ext_id, this_ip, matched_svcs)
                 else:
                     # 内部机器（转发机或接收机），继续往上追
-                    up_ip_real = _cf_ip(upstream_cf)
+                    up_ip_real = _cf_ip(upstream_cf) or up_ip  # 解析失败时用上游地址里的 IP
                     up_content = upstream_cf.content or {}
                     if upstream_cf.filename == 'feeder_receiver.cfg':
                         up_type = 'receiver'
@@ -355,7 +380,7 @@ def build_chain(service_id, msg_id):
 
                     # 接收机是终点，不再递归
                     if up_type != 'receiver':
-                        new_visited = visited_ips | {up_ip}
+                        new_visited = visited_ips | {up_ip, up_ip_real}
                         process_cf(upstream_cf, new_visited)
 
     # 入口：找所有直接包含目标消息的配置文件
@@ -431,9 +456,43 @@ def parse_subscriptions(sub_str, service_id, msg_id):
     return matched
 
 
+def _get_http_port(ip):
+    """
+    从该 IP 对应的 feeder_handler.cfg 配置中读取 HttpPort，默认 8080。
+    支持顶层 HttpPort 和嵌套在 feeder_handler 下的 HttpPort。
+    """
+    cf = ConfigFile.objects.filter(
+        filename='feeder_handler.cfg',
+        instance__host_ip=ip,
+    ).select_related('instance').first()
+    if cf is None:
+        # 尝试从 instance.name 解析 IP 匹配
+        for cf2 in ConfigFile.objects.filter(filename='feeder_handler.cfg').select_related('instance'):
+            if _cf_ip(cf2) == ip:
+                cf = cf2
+                break
+    if cf and cf.content and isinstance(cf.content, dict):
+        content = cf.content
+        # HttpPort 在 feeder_handler 节下
+        fh = content.get('feeder_handler', {})
+        if isinstance(fh, dict) and 'HttpPort' in fh:
+            try:
+                return int(fh['HttpPort'])
+            except (ValueError, TypeError):
+                pass
+        # 兼容直接挂顶层
+        if 'HttpPort' in content:
+            try:
+                return int(content['HttpPort'])
+            except (ValueError, TypeError):
+                pass
+    return HEARTBEAT_PORT
+
+
 def fetch_heartbeat(server):
     ip = server.ip
-    url = f'http://{ip}:{HEARTBEAT_PORT}/heartbeat?ss=1'
+    port = _get_http_port(ip)
+    url = f'http://{ip}:{port}/heartbeat?ss=1'
     try:
         resp = http_requests.get(url, timeout=HEARTBEAT_TIMEOUT)
         resp.raise_for_status()
@@ -478,6 +537,63 @@ class ForwarderChainViewSet(viewsets.ViewSet):
     GET /mdl-forwarder/chain/?msg=6.53   完整链路追溯
     GET /mdl-forwarder/chain/services/   Service 列表
     """
+
+    @action(detail=False, methods=['get'], url_path='debug_index')
+    def debug_index(self, request):
+        """
+        调试接口：查看 ip_to_cf / ip_port_to_cf 索引内容
+        GET /mdl-forwarder/chain/debug_index/?ip=10.21.238.101
+        GET /mdl-forwarder/chain/debug_index/?port=9012
+        """
+        ip_to_cf, ip_port_to_cf, port_to_cfs, handler_cfs, receiver_ip_set = _build_ip_to_config_map()
+
+        filter_ip = request.query_params.get('ip', '').strip()
+        filter_port = request.query_params.get('port', '').strip()
+
+        def cf_info(cf):
+            return {
+                'id': cf.id,
+                'filename': cf.filename,
+                'instance': cf.instance.name,
+                'host_ip': cf.instance.host_ip,
+                'inst_port': cf.instance.port,
+                'service_type': cf.instance.service_type.name,
+            }
+
+        result = {}
+
+        if filter_ip:
+            result['ip_to_cf'] = cf_info(ip_to_cf[filter_ip]) if filter_ip in ip_to_cf else None
+            result['ip_port_keys'] = [
+                {'port': p, 'cf': cf_info(c)}
+                for (i, p), c in ip_port_to_cf.items() if i == filter_ip
+            ]
+
+        if filter_port:
+            try:
+                port_int = int(filter_port)
+                result['port_to_cfs'] = [cf_info(c) for c in port_to_cfs.get(port_int, [])]
+                result['ip_port_exact'] = {
+                    ip: cf_info(c)
+                    for (ip, p), c in ip_port_to_cf.items() if p == port_int
+                }
+            except ValueError:
+                pass
+
+        # 查看某个 IP 对应配置文件的实际内容
+        if filter_ip and request.query_params.get('content'):
+            cf_obj = ip_to_cf.get(filter_ip)
+            if cf_obj:
+                result['content'] = cf_obj.content
+                result['raw_content_preview'] = (cf_obj.raw_content or '')[:500]
+
+        if not filter_ip and not filter_port:
+            result['ip_to_cf_keys'] = sorted(ip_to_cf.keys())
+            result['ip_port_to_cf_keys'] = [f'{i}:{p}' for (i, p) in sorted(ip_port_to_cf.keys())]
+            result['receiver_ip_set'] = sorted(receiver_ip_set)
+            result['handler_cfs_count'] = len(handler_cfs)
+
+        return ApiResponse(data=result)
 
     @action(detail=False, methods=['get'], url_path='services')
     def services(self, request):

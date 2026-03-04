@@ -25,6 +25,7 @@ from api.viewsets.config_mgmt_viewset import (
     ConfigHistoryViewSet,
 )
 from api.viewsets.mdl_server_viewset import MdlServerViewSet, LabelViewSet
+from api.viewsets.forwarder_chain_viewset import ForwarderChainViewSet
 
 router = DefaultRouter()
 
@@ -46,6 +47,7 @@ router.register(r'config-mgmt/audit-logs', ConfigAuditLogViewSet, basename="conf
 router.register(r'config-mgmt/history', ConfigHistoryViewSet, basename="config-history")
 router.register(r'mdl-servers', MdlServerViewSet, basename="mdl-server")
 router.register(r'mdl-labels', LabelViewSet, basename="mdl-label")
+router.register(r'mdl-forwarder/chain', ForwarderChainViewSet, basename="mdl-forwarder-chain")
 
 urlpatterns = [
     path('', include(router.urls)),

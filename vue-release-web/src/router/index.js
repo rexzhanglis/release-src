@@ -87,6 +87,12 @@ export const constantRoutes = [
         name: 'mdlServers',
         component: () => import('@/views/mdl/serverManagement'),
         meta: { title: '服务器管理', icon: 'dashboard' }
+      },
+      {
+        path: 'msg_chain',
+        name: 'mdlMsgChain',
+        component: () => import('@/views/mdl/msgChain'),
+        meta: { title: '消息链路查询', icon: 'dashboard' }
       }
     ]
   },

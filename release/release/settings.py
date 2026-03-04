@@ -254,6 +254,7 @@ DATABASES = {
         'PORT': os.environ.get("DB_PORT", "31431"),
         'OPTIONS': {
             "init_command": "SET foreign_key_checks = 0;",
+            "charset": "utf8mb4",
         }
     }
 }

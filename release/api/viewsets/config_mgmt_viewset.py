@@ -346,6 +346,9 @@ def _sync_from_gitlab():
             if f is None:
                 continue
             raw = f.read().decode('utf-8', errors='replace')
+            # MySQL utf8（3字节）不支持 4 字节字符（如 emoji），写入前过滤
+            raw = raw.encode('utf-8', errors='surrogatepass').decode('utf-8', errors='ignore')
+            raw = ''.join(c for c in raw if ord(c) <= 0xFFFF)
             content = _parse_json_safe(raw)
 
             ConfigFile.objects.update_or_create(

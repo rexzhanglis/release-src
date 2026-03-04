@@ -525,12 +525,19 @@ def fetch_heartbeat(ip, fqdn, port):
 
 
 def search_heartbeat(service_id, msg_id):
+    close_old_connections()
     servers = list(MdlServer.objects.filter(init_status='ready'))
     if not servers:
         return [], []
 
     # 在主线程预先查好每台服务器的 HttpPort，避免子线程中查库引发 OperationalError
-    server_infos = [(s.ip, s.fqdn, _get_http_port(s.ip)) for s in servers]
+    # 同一 IP 只查一次（MdlServer 表可能有重复记录）
+    seen_ips = set()
+    server_infos = []
+    for s in servers:
+        if s.ip not in seen_ips:
+            seen_ips.add(s.ip)
+            server_infos.append((s.ip, s.fqdn, _get_http_port(s.ip)))
 
     results = []
     unreachable = []

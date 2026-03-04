@@ -185,19 +185,36 @@ def _merge_schemas(configs_list):
 
 
 def _parse_instance_name(inst_name):
-    """从实例目录名解析 host_ip 和 port"""
+    """从实例目录名解析 host_ip 和 port。
+
+    支持格式：
+      10.21.238.101_9012            -> ip=10.21.238.101, port=9012
+      forward_dline_10.21.238.101_szcombine -> ip=10.21.238.101, port=None
+      read010_10.24.71.48           -> ip=10.24.71.48, port=None
+    """
     host_ip = ''
     port = None
-    inst_parts = inst_name.rsplit('_', 1)
-    if len(inst_parts) == 2:
-        right = inst_parts[1]
-        try:
-            port = int(right)
-            host_ip = inst_parts[0].replace('_', '.')
-        except ValueError:
-            host_ip = right
-    else:
-        host_ip = inst_name
+    # 优先：从名字各段中找 IP 格式（含3个点）的段
+    parts = inst_name.replace('-', '_').split('_')
+    for p in reversed(parts):
+        if p.count('.') == 3:
+            host_ip = p
+            break
+    # 末尾段若是纯数字则作为端口
+    if parts[-1].isdigit():
+        port = int(parts[-1])
+    # 降级：原始逻辑（处理 old_style_name_port 格式）
+    if not host_ip:
+        inst_parts = inst_name.rsplit('_', 1)
+        if len(inst_parts) == 2:
+            right = inst_parts[1]
+            try:
+                port = int(right)
+                host_ip = inst_parts[0].replace('_', '.')
+            except ValueError:
+                host_ip = right
+        else:
+            host_ip = inst_name
     return host_ip, port
 
 

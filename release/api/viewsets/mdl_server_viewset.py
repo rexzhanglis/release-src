@@ -207,7 +207,7 @@ class MdlServerViewSet(viewsets.ModelViewSet):
         """
         server = self.get_object()
         try:
-            ssh_user = (request.data.get('ssh_user') or '').strip() or server.user or os.environ.get('ANSIBLE_SSH_USER', 'root')
+            ssh_user = (request.data.get('ssh_user') or '').strip() or os.environ.get('ANSIBLE_SSH_USER', '') or server.user or 'root'
             ssh_pass = request.data.get('ssh_pass', '').strip()
             if not ssh_pass:
                 try:
@@ -393,7 +393,7 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 pass
             if not ssh_pass:
                 ssh_pass = os.environ.get('ANSIBLE_SSH_PASS', '')
-            ssh_user = server.user or os.environ.get('ANSIBLE_SSH_USER', 'root')
+            ssh_user = os.environ.get('ANSIBLE_SSH_USER', '') or server.user or 'root'
 
             import subprocess as _sp
             import tempfile as _tf
@@ -488,7 +488,7 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 pass
             if not ssh_pass:
                 ssh_pass = os.environ.get('ANSIBLE_SSH_PASS', '')
-            ssh_user = server.user or os.environ.get('ANSIBLE_SSH_USER', 'root')
+            ssh_user = os.environ.get('ANSIBLE_SSH_USER', '') or server.user or 'root'
 
             import subprocess as _sp
             import tempfile as _tf

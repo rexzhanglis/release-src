@@ -98,6 +98,9 @@ def _build_ip_to_config_map():
     for cf in all_cfs:
         # 从 instance.host_ip 或 instance.name 解析 IP
         ip = (cf.instance.host_ip or '').strip()
+        # host_ip 可能存的是节点名（如 'szcombine'）而非 IP，需校验格式
+        if ip and ip.count('.') != 3:
+            ip = ''
         if not ip:
             name = cf.instance.name
             parts = name.replace('-', '_').split('_')
@@ -232,6 +235,9 @@ def _get_upstreams_from_content(content, service_id, msg_id):
 def _cf_ip(cf):
     """获取 ConfigFile 对应机器的 IP。"""
     ip = (cf.instance.host_ip or '').strip()
+    # host_ip 可能存的是节点名（如 'szcombine'）而非 IP，需校验格式
+    if ip and ip.count('.') != 3:
+        ip = ''
     if not ip:
         name = cf.instance.name
         # 与 _build_ip_to_config_map 保持相同的解析逻辑：
@@ -352,7 +358,12 @@ def build_chain(service_id, msg_id):
                     candidates = port_to_cfs.get(up_port, [])
                     if len(candidates) == 1:
                         upstream_cf = candidates[0]
-                    # 多个候选时无法确定，放弃（仍走外部源逻辑）
+                    elif len(candidates) > 1 and up_ip:
+                        # 多个候选时，尝试通过实例名中解析出的 IP 精确匹配
+                        for c in candidates:
+                            if _cf_ip(c) == up_ip:
+                                upstream_cf = c
+                                break
 
                 if upstream_cf is None:
                     if up_ip in receiver_ip_set:
@@ -599,6 +610,26 @@ class ForwarderChainViewSet(viewsets.ViewSet):
             result['ip_port_to_cf_keys'] = [f'{i}:{p}' for (i, p) in sorted(ip_port_to_cf.keys())]
             result['receiver_ip_set'] = sorted(receiver_ip_set)
             result['handler_cfs_count'] = len(handler_cfs)
+
+        # 追踪特定 IP:Port 的链路查找过程
+        trace_msg = request.query_params.get('trace_msg', '').strip()
+        if filter_ip and filter_port and trace_msg:
+            parsed = parse_query_msg(trace_msg)
+            if parsed:
+                t_svc, t_msg = parsed
+                port_int = int(filter_port)
+                upstream_cf = ip_port_to_cf.get((filter_ip, port_int))
+                if upstream_cf is None:
+                    upstream_cf = ip_to_cf.get(filter_ip)
+                if upstream_cf is None:
+                    candidates = port_to_cfs.get(port_int, [])
+                    upstream_cf = candidates[0] if len(candidates) == 1 else None
+                result['trace'] = {
+                    'found_cf': cf_info(upstream_cf) if upstream_cf else None,
+                    'upstreams_in_cf': _get_upstreams_from_content(
+                        upstream_cf.content or {}, t_svc, t_msg
+                    ) if upstream_cf else [],
+                }
 
         return ApiResponse(data=result)
 

@@ -103,7 +103,13 @@
       @sort-change="handleSortChange"
     >
       <el-table-column type="selection" width="40" />
-      <el-table-column prop="fqdn" label="FQDN" min-width="160" show-overflow-tooltip sortable="custom" />
+      <el-table-column prop="fqdn" label="FQDN" min-width="160" show-overflow-tooltip sortable="custom">
+        <template slot-scope="{ row }">
+          <router-link :to="{ name: 'mdlServerDetail', params: { id: row.id } }" style="color:#409eff;text-decoration:none">
+            {{ row.fqdn }}
+          </router-link>
+        </template>
+      </el-table-column>
       <el-table-column v-if="visibleCols.includes('ip')" prop="ip" label="IP 地址" width="140" sortable="custom" />
       <el-table-column v-if="visibleCols.includes('service_name')" prop="service_name" label="服务名" width="140" sortable="custom" />
       <el-table-column v-if="visibleCols.includes('labels')" label="标签" width="160">
@@ -155,16 +161,10 @@
             @click="handleInit(row)"
           >{{ row.init_status === 'failed' ? '重新初始化' : '初始化' }}</el-button>
 
-          <!-- 运行中 → 变更配置 + 更多（重新初始化） -->
+          <!-- 运行中 → 变更配置 + 重新初始化 -->
           <template v-else-if="row.init_status === 'ready'">
             <el-button size="mini" type="text" icon="el-icon-setting" style="color:#409eff" @click="handleConfigChange(row)">变更配置</el-button>
-            <el-dropdown size="mini" trigger="click" @command="cmd => handleRowCommand(cmd, row)" style="margin-left:4px">
-              <el-button size="mini" type="text" icon="el-icon-more" style="color:#909399" />
-              <el-dropdown-menu slot="dropdown">
-                <el-dropdown-item command="services" icon="el-icon-tickets">systemd 服务</el-dropdown-item>
-                <el-dropdown-item command="reinit" icon="el-icon-s-tools">重新初始化</el-dropdown-item>
-              </el-dropdown-menu>
-            </el-dropdown>
+            <el-button size="mini" type="text" icon="el-icon-s-tools" style="color:#909399" @click="handleReinit(row)">重新初始化</el-button>
           </template>
 
           <el-button size="mini" type="text" icon="el-icon-delete" style="color:#f56c6c" @click="handleDelete(row)">删除</el-button>
@@ -330,82 +330,6 @@
       </div>
     </el-dialog>
 
-    <!-- systemd 服务管理弹窗 -->
-    <el-dialog
-      :visible.sync="showSystemd"
-      :title="`systemd 服务 — ${systemdServer ? systemdServer.fqdn : ''}`"
-      width="860px"
-      :close-on-click-modal="false"
-    >
-      <el-table v-loading="systemdLoading" :data="systemdList" border size="small" max-height="460">
-        <el-table-column prop="name" label="服务名" min-width="200" show-overflow-tooltip />
-        <el-table-column label="运行状态" width="100" align="center">
-          <template slot-scope="{ row }">
-            <el-tag
-              :type="row.active_state === 'active' ? 'success' : row.active_state === 'failed' ? 'danger' : 'info'"
-              size="mini"
-            >{{ row.active_state }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="子状态" width="90" align="center">
-          <template slot-scope="{ row }">
-            <span style="font-size:11px;color:#909399">{{ row.sub_state }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="自启动" width="90" align="center">
-          <template slot-scope="{ row }">
-            <el-tag
-              v-if="row.enabled !== null"
-              :type="row.enabled === 'enabled' ? 'success' : 'info'"
-              size="mini"
-            >{{ row.enabled === 'enabled' ? '已启用' : row.enabled || '-' }}</el-tag>
-            <span v-else style="color:#c0c4cc;font-size:11px">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="description" label="描述" min-width="180" show-overflow-tooltip>
-          <template slot-scope="{ row }">
-            <span style="font-size:11px;color:#606266">{{ row.description }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="220" align="center">
-          <template slot-scope="{ row }">
-            <el-button
-              v-if="row.active_state !== 'active'"
-              size="mini" type="text" style="color:#67c23a"
-              @click="handleSystemdControl(row, 'start')"
-            >启动</el-button>
-            <el-button
-              v-else
-              size="mini" type="text" style="color:#e6a23c"
-              @click="handleSystemdControl(row, 'stop')"
-            >停止</el-button>
-            <el-button
-              v-if="row.active_state === 'active'"
-              size="mini" type="text"
-              @click="handleSystemdControl(row, 'restart')"
-            >重启</el-button>
-            <el-divider direction="vertical" />
-            <el-button
-              v-if="row.enabled !== 'enabled'"
-              size="mini" type="text" style="color:#409eff"
-              @click="handleSystemdControl(row, 'enable')"
-            >自启</el-button>
-            <el-button
-              v-else
-              size="mini" type="text" style="color:#f56c6c"
-              @click="handleSystemdControl(row, 'disable')"
-            >禁用</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <div style="margin-top:8px;font-size:12px;color:#909399">
-        共 {{ systemdList.length }} 个服务
-      </div>
-      <div slot="footer">
-        <el-button size="small" :loading="systemdLoading" icon="el-icon-refresh" @click="openSystemdDialog(systemdServer)">刷新</el-button>
-        <el-button @click="showSystemd = false">关闭</el-button>
-      </div>
-    </el-dialog>
   </div>
 </template>
 
@@ -479,11 +403,6 @@ export default {
       showInitLogDialog: false,
       initLogTitle: '',
       initLogContent: '',
-      // systemd 服务弹窗
-      showSystemd: false,
-      systemdServer: null,
-      systemdLoading: false,
-      systemdList: [],
     }
   },
   filters: {
@@ -637,55 +556,12 @@ export default {
       this.$router.push({ name: 'mdlConfigManagement', query: { ip: row.ip } })
     },
 
-    handleRowCommand(cmd, row) {
-      if (cmd === 'reinit') {
-        this.$confirm(`确认对「${row.fqdn}」重新执行初始化？运行中的服务不会被停止，但目录和 systemd 配置会被覆盖。`, '重新初始化确认', {
-          type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消'
-        }).then(() => {
-          this.handleInit(row)
-        }).catch(() => {})
-      } else if (cmd === 'services') {
-        this.openSystemdDialog(row)
-      }
-    },
-
-    async openSystemdDialog(row) {
-      this.systemdServer = row
-      this.showSystemd = true
-      this.systemdLoading = true
-      this.systemdList = []
-      try {
-        const { getSystemdServices } = await import('@/api/mdlServer')
-        const res = await getSystemdServices(row.id)
-        this.systemdList = (res.data && res.data.services) || []
-      } catch (e) {
-        this.$message.error('获取 systemd 服务列表失败：' + (e.message || ''))
-      } finally {
-        this.systemdLoading = false
-      }
-    },
-
-    async handleSystemdControl(svc, action) {
-      try {
-        await this.$confirm(
-          `确认对「${svc.name}」执行 ${action}？`,
-          '确认操作',
-          { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' }
-        )
-      } catch { return }
-      try {
-        const { controlSystemdService } = await import('@/api/mdlServer')
-        const res = await controlSystemdService(this.systemdServer.id, { service: svc.name, action })
-        if (res.data && res.data.ok) {
-          this.$message.success(`${action} 成功`)
-          // 刷新列表
-          await this.openSystemdDialog(this.systemdServer)
-        } else {
-          this.$message.error(`${action} 失败：` + ((res.data && res.data.output) || ''))
-        }
-      } catch (e) {
-        this.$message.error('操作失败：' + (e.message || ''))
-      }
+    handleReinit(row) {
+      this.$confirm(`确认对「${row.fqdn}」重新执行初始化？运行中的服务不会被停止，但目录和 systemd 配置会被覆盖。`, '重新初始化确认', {
+        type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消'
+      }).then(() => {
+        this.handleInit(row)
+      }).catch(() => {})
     },
 
     openOpLog() {

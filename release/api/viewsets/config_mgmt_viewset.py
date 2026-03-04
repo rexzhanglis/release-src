@@ -286,10 +286,14 @@ def _sync_from_gitlab():
                 continue
             rel_path = parts_full[1]
             parts = rel_path.split('/')
-            if len(parts) != 3:
+            # 至少需要 3 层：<service_type_path>/<instance>/<filename>
+            # 支持多级 service_type，如 receiver/windows_receiver/cffex
+            if len(parts) < 3:
                 continue
 
-            st_name, inst_name, cfg_filename = parts
+            cfg_filename = parts[-1]
+            inst_name = parts[-2]
+            st_name = '/'.join(parts[:-2])  # 中间所有层级合并为 service_type 名
 
             service_type, created = ServiceType.objects.get_or_create(name=st_name)
             if created:

@@ -408,17 +408,22 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                  '-a', 'systemctl list-units --type=service --all --plain --no-legend 2>/dev/null'],
                 stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
             )
+            def _strip_ansible_header(output):
+                """提取 Ansible shell 模块输出中 >> 之后的实际内容"""
+                idx = output.find('>>\n')
+                if idx != -1:
+                    return output[idx + 3:]
+                return output
+
             services = []
             if proc.returncode == 0:
-                for line in proc.stdout.splitlines():
+                raw = _strip_ansible_header(proc.stdout)
+                for line in raw.splitlines():
                     line = line.strip()
-                    if not line or line.startswith('UNIT') or '>>>' in line:
-                        continue
-                    # 跳过 ansible 输出的头部（release | CHANGED | rc=0 >>）
-                    if '|' in line and 'rc=' in line:
+                    if not line:
                         continue
                     parts = line.split(None, 4)
-                    if len(parts) >= 4:
+                    if len(parts) >= 4 and parts[0].endswith('.service'):
                         services.append({
                             'name': parts[0],
                             'load_state': parts[1],
@@ -438,10 +443,8 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                     stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
                 )
                 if proc2.returncode == 0:
-                    enabled_lines = [
-                        l.strip() for l in proc2.stdout.splitlines()
-                        if l.strip() and '|' not in l and 'rc=' not in l
-                    ]
+                    raw2 = _strip_ansible_header(proc2.stdout)
+                    enabled_lines = [l.strip() for l in raw2.splitlines() if l.strip()]
                     for i, svc in enumerate(loaded):
                         if i < len(enabled_lines):
                             svc['enabled'] = enabled_lines[i].strip()

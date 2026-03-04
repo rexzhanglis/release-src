@@ -114,19 +114,27 @@ def _build_ip_to_config_map():
             if ip:
                 receiver_ip_set.add(ip)
                 ip_to_cf[ip] = cf
-                # receiver 监听端口：从 feeder_handler key 的 Publishers 解析
+
+                # 用 instance.port 建立端口索引（最可靠）
+                inst_port = cf.instance.port
+                if inst_port:
+                    ip_port_to_cf[(ip, inst_port)] = cf
+
+                # 从配置内容 Publishers 建立端口索引
+                # feeder_receiver.cfg 的顶层 key 可能是 feeder_receiver 或 feeder_handler
                 content = cf.content
                 if content and isinstance(content, dict):
-                    publishers = content.get('feeder_handler', {}).get('Publishers', [])
-                    for pub in publishers:
-                        addr = pub.get('Address', '')
-                        if ':' in addr:
-                            port_str = addr.split(':')[-1]
-                            try:
-                                port = int(port_str)
-                                ip_port_to_cf[(ip, port)] = cf
-                            except ValueError:
-                                pass
+                    for top_key in ('feeder_receiver', 'feeder_handler'):
+                        publishers = content.get(top_key, {}).get('Publishers', [])
+                        for pub in publishers:
+                            addr = pub.get('Address', '')
+                            if ':' in addr:
+                                port_str = addr.split(':')[-1]
+                                try:
+                                    port = int(port_str)
+                                    ip_port_to_cf[(ip, port)] = cf
+                                except ValueError:
+                                    pass
         else:
             # feeder_handler.cfg — 转发机/聚合机
             handler_cfs.append(cf)
@@ -210,7 +218,15 @@ def _cf_ip(cf):
     ip = (cf.instance.host_ip or '').strip()
     if not ip:
         name = cf.instance.name
-        ip = name.split('_')[0] if '_' in name else name
+        # 与 _build_ip_to_config_map 保持相同的解析逻辑：
+        # 支持 "bjs_10.51.201.209"、"read010_10.24.71.48" 等格式
+        parts = name.replace('-', '_').split('_')
+        for p in reversed(parts):
+            if p.count('.') == 3:
+                ip = p
+                break
+        if not ip:
+            ip = name.split('_')[0] if '_' in name else name
     return ip
 
 
@@ -309,11 +325,14 @@ def build_chain(service_id, msg_id):
                     continue
 
                 upstream_cf = ip_port_to_cf.get((up_ip, up_port))
+                # 端口未命中时，尝试用 IP 兜底查找（端口可能未在配置里声明）
+                if upstream_cf is None:
+                    upstream_cf = ip_to_cf.get(up_ip)
+
                 if upstream_cf is None:
                     if up_ip in receiver_ip_set:
-                        # 接收机（有配置文件，但 ip_port_to_cf 未匹配到端口）
-                        recv_cf = ip_to_cf.get(up_ip)
-                        recv_instance = recv_cf.instance.name if recv_cf else up_ip
+                        # 接收机（IP 已知但配置文件未能建立索引）
+                        recv_instance = up_ip
                         get_or_create_node(up_ip, recv_instance, 'receiver', matched_svcs)
                         add_edge(up_ip, this_ip, matched_svcs)
                     else:

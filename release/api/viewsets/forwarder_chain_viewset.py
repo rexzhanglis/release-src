@@ -87,7 +87,7 @@ def _build_ip_to_config_map():
     """
     all_cfs = list(ConfigFile.objects.filter(
         filename__in=['feeder_handler.cfg', 'feeder_receiver.cfg']
-    ).select_related('instance'))
+    ).select_related('instance', 'instance__service_type'))
 
     ip_to_cf = {}       # ip -> cf
     ip_port_to_cf = {}  # (ip, port) -> cf
@@ -235,18 +235,15 @@ def _get_upstreams_from_content(content, service_id, msg_id):
 
 def _is_receiver_cf(cf):
     """判断配置文件是否属于接收机节点。
-    条件：filename==feeder_receiver.cfg，或 service_type 名称含 'receiver'，
-    或配置内容里没有 MSG_FORWARDER/TEAMING_HANDLER（纯接收机用 feeder_handler.cfg 的情况）。
+    条件：filename==feeder_receiver.cfg，或 service_type 名称含 'receiver'。
     """
     if cf.filename == 'feeder_receiver.cfg':
         return True
-    st_name = (cf.instance.service_type.name if cf.instance.service_type_id else '') if hasattr(cf.instance, 'service_type') else ''
-    if 'receiver' in st_name.lower():
-        return True
-    content = cf.content or {}
-    if isinstance(content, dict) and not content.get('MSG_FORWARDER') and not content.get('TEAMING_HANDLER'):
-        return True
-    return False
+    try:
+        st_name = cf.instance.service_type.name or ''
+    except Exception:
+        st_name = ''
+    return 'receiver' in st_name.lower()
 
 
 def _cf_ip(cf):

@@ -20,8 +20,9 @@ RUN apt update -o Acquire::Check-Valid-Until=false && apt install -y -o Acquire:
 RUN ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
 RUN echo "Asia/Shanghai" > /etc/timezone
 
-# 更新 pip
-RUN pip install pip -U -i http://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
+# 更新 pip，并确保 setuptools 可用
+RUN pip install pip -U -i http://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com && \
+    pip install "setuptools==69.5.1" -i http://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
 # 依赖包安装
 COPY ./docker/requirements.txt requirements.txt
 RUN pip install -r requirements.txt -i http://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com

@@ -12,13 +12,7 @@
         <el-button type="primary" :loading="syncing" :disabled="!canOperate" @click="handleSync">
           <i class="el-icon-refresh"></i> 同步
         </el-button>
-        <el-button type="warning" :disabled="!hasChecked || !canOperate" @click="showBatchEdit = true">
-          <i class="el-icon-edit"></i> 批量修改
-        </el-button>
-        <el-button type="success" :disabled="!hasChecked || !canOperate" @click="handleGitCommit">
-          <i class="el-icon-upload2"></i> 提交 Git
-        </el-button>
-        <el-button type="info" :disabled="!hasChecked || !canOperate" @click="handlePushConsul">
+<el-button type="info" :disabled="!hasChecked || !canOperate" @click="handlePushConsul">
           <i class="el-icon-connection"></i> 推送 Consul
         </el-button>
         <el-button type="danger" :disabled="!hasCheckedInstances || !canDeploy" @click="showDeploy = true">

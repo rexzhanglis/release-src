@@ -218,9 +218,7 @@ class MdlReleaseDetailService(ReleaseDetailService):
         cmd = """grep -a $(date '+%Y-%m-%d') {} | awk -v dt="$(date '+%Y-%m-%d %T' -d '-1 minutes')" -F, '$1 > dt'""".format(
             log_file)
         res = SshClient(ip=ip, username=username, password=password).send_cmd(cmd)
-        self.release_detail.log = self.release_detail.log + "{}.log信息如下：
-".format(executable) + "
-".join(res)
+        self.release_detail.log = self.release_detail.log + "{}.log信息如下：\n".format(executable) + "\n".join(res)
         self.release_detail.save()
 
     def deploy_config(self, module):

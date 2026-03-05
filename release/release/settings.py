@@ -253,7 +253,7 @@ DATABASES = {
         'HOST': os.environ.get("DB_HOST", "10.24.51.155"),
         'PORT': os.environ.get("DB_PORT", "31431"),
         'OPTIONS': {
-            "init_command": "SET foreign_key_checks = 0; SET SESSION wait_timeout=300;",
+            "init_command": "SET foreign_key_checks = 0; SET SESSION wait_timeout=300; SET SESSION net_read_timeout=300; SET SESSION net_write_timeout=300;",
             "charset": "utf8mb4",
         }
     }

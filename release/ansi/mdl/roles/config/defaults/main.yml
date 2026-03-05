@@ -2,12 +2,13 @@
 # package_name: mdl_release-{{ version }}.tar.gz
 package_name: market_data_line-{{ version }}.tar.gz
 package_url: http://artifactory.datayes.com/artifactory/mdl-release/com/datayes/market_data_line/{{ version }}/{{ package_name }}
+executable: feeder_handler
 install_items:
-  - feeder_handler
+  - "{{ executable }}"
   - libmdl_api.so
 backup_items:
-  - feeder_handler
-  - feeder_handler.cfg
+  - "{{ executable }}"
+  - "{{ consul_files.split(',')[0] | trim }}"
   - libmdl_api.so
   - version
 put_files: []

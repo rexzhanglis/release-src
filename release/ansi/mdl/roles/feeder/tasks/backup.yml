@@ -1,5 +1,5 @@
 - name: set backup dir
-  set_fact: backup_dir={{ backups_dir }}/feeder_{{ existing_version }}_{{ ansible_date_time.iso8601_basic_short }}
+  set_fact: backup_dir={{ backups_dir }}/{{ executable | default('feeder_handler') }}_{{ existing_version }}_{{ ansible_date_time.iso8601_basic_short }}
 
 - name: create backup dir
   file: path={{ backup_dir }} state=directory 

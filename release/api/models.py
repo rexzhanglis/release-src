@@ -29,7 +29,7 @@ class ReleasePlan(TimestampedModel):
     def get_all_release_contents(self):
         if self.project == 'MDL':
             return list(self.mdlreleasecontent_set.all().values("index", "issue_key", "release_version", "release_object",
-                                                                "config_file", "type","status"))
+                                                                "config_file", "type", "status", "executable"))
         return list(
             self.releasecontent_set.all().values("index", "issue_key", "release_version", "rancher_app_version",
                                                  "config_file", "status"))
@@ -131,6 +131,8 @@ class MdlReleaseContent(TimestampedModel):
     config_file = models.JSONField("配置文件", null=True, blank=True)  # 保存成字符串
     release_object = models.CharField("发布对象 服务器+服务名", max_length=200, null=False)
     type = models.CharField("发布类型", choices=TYPE_CHOICES, null=True, max_length=20)
+    executable = models.CharField("可执行文件名", max_length=100, null=True, blank=True,
+                                   help_text="部署的可执行文件，如 feeder_handler、feeder_receive、feeder_client")
 
     def set_status(self, status):
         self.status = status

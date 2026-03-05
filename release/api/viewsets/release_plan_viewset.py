@@ -113,6 +113,7 @@ class ReleasePlanViewSet(viewsets.ModelViewSet):
                     obj["issue_key"] = data["issue_key"]
                     if data["type"] == "version":
                         obj["release_version"] = content["release_version"]
+                        obj["executable"] = content.get("executable") or "feeder_handler"
                     MdlReleaseContent.objects.create(**obj)
                 # 3.2 rancher项目创建发布内容
                 else:
@@ -155,6 +156,7 @@ class ReleasePlanViewSet(viewsets.ModelViewSet):
                     obj["issue_key"] = data["issue_key"]
                     if data["type"] == "version":
                         obj["release_version"] = content["release_version"]
+                        obj["executable"] = content.get("executable") or "feeder_handler"
                     MdlReleaseContent.objects.create(**obj)
                 # 3.2 rancher项目创建发布内容
                 else:

@@ -469,17 +469,35 @@ class MdlServerViewSet(viewsets.ModelViewSet):
     def systemd_control(self, request, pk=None):
         """
         控制 systemd 服务：enable/disable/start/stop/restart
-        请求体：{ "service": "mdl-forward.service", "action": "enable" }
+        请求体：
+          单个：{ "service": "mdl-forward.service", "action": "restart" }
+          批量：{ "services": ["mdl-a.service", "mdl-b.service"], "action": "restart",
+                  "consul_pull": true }
+          支持 consul_pull=true 在 restart/start 前先执行 consul_pull.py 拉取最新配置
         """
         server = self.get_object()
-        service = (request.data.get('service') or '').strip()
         ctrl_action = (request.data.get('action') or '').strip()
         ALLOWED = ('start', 'stop', 'restart', 'enable', 'disable', 'reload')
-        if not service or ctrl_action not in ALLOWED:
+        if ctrl_action not in ALLOWED:
             return Response(
-                {'code': 400, 'message': f'service 和 action 必填，action 可选值：{", ".join(ALLOWED)}'},
+                {'code': 400, 'message': f'action 必填，可选值：{", ".join(ALLOWED)}'},
                 status=drf_status.HTTP_400_BAD_REQUEST
             )
+
+        # 支持 service（单个）或 services（批量）
+        single = (request.data.get('service') or '').strip()
+        multi = request.data.get('services') or []
+        if isinstance(multi, str):
+            multi = [s.strip() for s in multi.split(',') if s.strip()]
+        services = [single] if single else list(multi)
+        if not services:
+            return Response(
+                {'code': 400, 'message': 'service 或 services 必填'},
+                status=drf_status.HTTP_400_BAD_REQUEST
+            )
+
+        do_consul_pull = request.data.get('consul_pull', False) in (True, 'true', '1', 1)
+
         try:
             ssh_pass = ''
             try:
@@ -502,25 +520,208 @@ class MdlServerViewSet(viewsets.ModelViewSet):
             env = os.environ.copy()
             env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
 
-            if ctrl_action in ('enable', 'disable'):
-                cmd = f'systemctl {ctrl_action} {service}'
-            else:
-                cmd = f'systemctl {ctrl_action} {service}'
+            output_parts = []
 
+            # 先执行 consul_pull（仅 restart/start 时有意义）
+            if do_consul_pull and ctrl_action in ('restart', 'start'):
+                install_dir = server.install_dir or ''
+                pull_script = install_dir.rstrip('/') + '/consul_pull.py'
+                remote_python = server.remote_python or '/usr/bin/python3'
+                consul_token = server.consul_token or ''
+                pull_env = f'CONSUL_TOKEN={consul_token} {remote_python} {pull_script}'
+                proc_pull = _sp.run(
+                    ['ansible', 'release', '-i', hosts_path, '-m', 'shell',
+                     '-a', pull_env],
+                    stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
+                )
+                output_parts.append(f'[consul_pull]\n{proc_pull.stdout or proc_pull.stderr}')
+
+            # 执行 systemctl 命令（批量合并成一条）
+            svc_list = ' '.join(services)
+            cmd = f'systemctl {ctrl_action} {svc_list}'
             proc = _sp.run(
                 ['ansible', 'release', '-i', hosts_path, '-m', 'shell',
                  '-a', cmd, '--become'],
-                stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
+                stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=60
             )
+            output_parts.append(f'[systemctl {ctrl_action}]\n{proc.stdout or proc.stderr}')
             shutil.rmtree(tmpdir, ignore_errors=True)
 
             ok = proc.returncode == 0
             return ApiResponse(data={
                 'ok': ok,
-                'output': proc.stdout or proc.stderr,
+                'output': '\n'.join(output_parts),
                 'action': ctrl_action,
-                'service': service,
+                'services': services,
             })
+        except Exception as e:
+            return Response(
+                {'code': 500, 'message': str(e)},
+                status=drf_status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['get'], url_path='systemd_service_file')
+    def systemd_service_file(self, request, pk=None):
+        """
+        读取远端 systemd service 文件内容。
+        GET /mdl-servers/{id}/systemd_service_file/?name=mdl-forward.service
+        """
+        server = self.get_object()
+        name = (request.query_params.get('name') or '').strip()
+        if not name or not name.endswith('.service'):
+            return Response(
+                {'code': 400, 'message': 'name 必填且必须以 .service 结尾'},
+                status=drf_status.HTTP_400_BAD_REQUEST
+            )
+        try:
+            ssh_pass = ''
+            try:
+                ssh_pass = Constance.get_value('ansible_ssh_pass') or ''
+            except Exception:
+                pass
+            if not ssh_pass:
+                ssh_pass = os.environ.get('ANSIBLE_SSH_PASS', '')
+            ssh_user = os.environ.get('ANSIBLE_SSH_USER', '') or server.user or 'root'
+
+            import subprocess as _sp
+            import tempfile as _tf
+            tmpdir = _tf.mkdtemp(prefix='mdl_svc_file_')
+            hosts_path = os.path.join(tmpdir, 'hosts')
+            with open(hosts_path, 'w') as f:
+                f.write(f"release ansible_ssh_host={server.ip} "
+                        f"ansible_ssh_user={ssh_user} "
+                        f"ansible_ssh_pass={ssh_pass}\n")
+
+            env = os.environ.copy()
+            env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
+
+            service_path = f'/lib/systemd/system/{name}'
+            proc = _sp.run(
+                ['ansible', 'release', '-i', hosts_path, '-m', 'shell',
+                 '-a', f'cat {service_path}'],
+                stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=15
+            )
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+            if proc.returncode != 0:
+                return Response(
+                    {'code': 404, 'message': f'文件不存在或读取失败：{proc.stderr}'},
+                    status=drf_status.HTTP_404_NOT_FOUND
+                )
+
+            # 提取 >> 后的实际内容
+            raw = proc.stdout
+            idx = raw.find('>>')
+            content = raw[idx + 2:].lstrip('\r\n ') if idx != -1 else raw
+            return ApiResponse(data={'name': name, 'content': content, 'path': service_path})
+
+        except Exception as e:
+            return Response(
+                {'code': 500, 'message': str(e)},
+                status=drf_status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'], url_path='systemd_manage_service')
+    def systemd_manage_service(self, request, pk=None):
+        """
+        管理 systemd service 文件：新增 / 修改 / 删除 / 重命名
+        请求体：
+          新增：{ "op": "create", "name": "mdl-new.service", "content": "[Unit]..." }
+          修改：{ "op": "update", "name": "mdl-existing.service", "content": "[Unit]..." }
+          删除：{ "op": "delete", "name": "mdl-old.service" }
+          重命名：{ "op": "rename", "name": "mdl-old.service", "new_name": "mdl-new.service" }
+        所有操作后执行 systemctl daemon-reload。
+        """
+        server = self.get_object()
+        op = (request.data.get('op') or '').strip()
+        name = (request.data.get('name') or '').strip()
+        ALLOWED_OPS = ('create', 'update', 'delete', 'rename')
+
+        if op not in ALLOWED_OPS:
+            return Response(
+                {'code': 400, 'message': f'op 必填，可选值：{", ".join(ALLOWED_OPS)}'},
+                status=drf_status.HTTP_400_BAD_REQUEST
+            )
+        if not name or not name.endswith('.service'):
+            return Response(
+                {'code': 400, 'message': 'name 必填且必须以 .service 结尾'},
+                status=drf_status.HTTP_400_BAD_REQUEST
+            )
+
+        content = request.data.get('content', '')
+        new_name = (request.data.get('new_name') or '').strip()
+        if op == 'rename' and (not new_name or not new_name.endswith('.service')):
+            return Response(
+                {'code': 400, 'message': 'rename 操作需要 new_name 且以 .service 结尾'},
+                status=drf_status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            ssh_pass = ''
+            try:
+                ssh_pass = Constance.get_value('ansible_ssh_pass') or ''
+            except Exception:
+                pass
+            if not ssh_pass:
+                ssh_pass = os.environ.get('ANSIBLE_SSH_PASS', '')
+            ssh_user = os.environ.get('ANSIBLE_SSH_USER', '') or server.user or 'root'
+
+            import subprocess as _sp
+            import tempfile as _tf
+            tmpdir = _tf.mkdtemp(prefix='mdl_svc_manage_')
+            hosts_path = os.path.join(tmpdir, 'hosts')
+            with open(hosts_path, 'w') as f:
+                f.write(f"release ansible_ssh_host={server.ip} "
+                        f"ansible_ssh_user={ssh_user} "
+                        f"ansible_ssh_pass={ssh_pass}\n")
+
+            env = os.environ.copy()
+            env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
+
+            service_dir = '/lib/systemd/system'
+            service_path = f'{service_dir}/{name}'
+
+            def _run_shell(cmd, timeout=15):
+                return _sp.run(
+                    ['ansible', 'release', '-i', hosts_path, '-m', 'shell',
+                     '-a', cmd, '--become'],
+                    stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=timeout
+                )
+
+            if op in ('create', 'update'):
+                # 将 content 写入本地临时文件，再用 copy 模块上传
+                local_file = os.path.join(tmpdir, name)
+                with open(local_file, 'w', encoding='utf-8') as fp:
+                    fp.write(content)
+                proc = _sp.run(
+                    ['ansible', 'release', '-i', hosts_path, '-m', 'copy',
+                     '-a', f'src={local_file} dest={service_path} owner=root group=root mode=0644',
+                     '--become'],
+                    stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=15
+                )
+            elif op == 'delete':
+                proc = _run_shell(f'rm -f {service_path} && systemctl disable {name} 2>/dev/null || true')
+            elif op == 'rename':
+                new_path = f'{service_dir}/{new_name}'
+                proc = _run_shell(
+                    f'cp {service_path} {new_path} && '
+                    f'systemctl disable {name} 2>/dev/null || true; '
+                    f'rm -f {service_path}'
+                )
+
+            # daemon-reload
+            _run_shell('systemctl daemon-reload')
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+            ok = proc.returncode == 0
+            return ApiResponse(data={
+                'ok': ok,
+                'op': op,
+                'name': name,
+                'new_name': new_name if op == 'rename' else None,
+                'output': proc.stdout or proc.stderr,
+            })
+
         except Exception as e:
             return Response(
                 {'code': 500, 'message': str(e)},

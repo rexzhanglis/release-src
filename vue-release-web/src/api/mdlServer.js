@@ -53,3 +53,11 @@ export function getSystemdServices(id) {
 export function controlSystemdService(id, data) {
   return request({ url: `/mdl-servers/${id}/systemd_control/`, method: 'post', data })
 }
+
+export function getSystemdServiceFile(id, name) {
+  return request({ url: `/mdl-servers/${id}/systemd_service_file/`, method: 'get', params: { name } })
+}
+
+export function manageSystemdService(id, data) {
+  return request({ url: `/mdl-servers/${id}/systemd_manage_service/`, method: 'post', data })
+}

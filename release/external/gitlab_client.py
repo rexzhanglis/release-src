@@ -14,6 +14,12 @@ class GitlabClient(object):
         file = mdl_project.files.get(file_path=file_path, ref='master').decode().decode('utf8')
         return file
 
+    def list_directory_files(self, dir_path, project_id=6481):
+        """列出 Git 目录下所有文件名（不递归，只取文件类型）"""
+        mdl_project = gl.projects.get(project_id)
+        items = mdl_project.repository_tree(path=dir_path, ref='master', all=True)
+        return [item['name'] for item in items if item['type'] == 'blob']
+
 
 if __name__ == '__main__':
     config_file = "http://git.datayes.com/consul/mdl/-/blob/master/forward/forward_cnc01_10.24.71.83/feeder_handler.cfg"

@@ -71,14 +71,23 @@
       <el-popover
         placement="bottom-end"
         trigger="click"
-        width="180"
+        width="220"
         style="margin-left:8px"
       >
         <div>
-          <div style="font-size:12px;color:#909399;margin-bottom:8px">选择显示的列</div>
-          <el-checkbox-group v-model="visibleCols" style="display:flex;flex-direction:column;gap:4px">
-            <el-checkbox v-for="c in colOptions" :key="c.key" :label="c.key" style="margin-left:0">{{ c.label }}</el-checkbox>
-          </el-checkbox-group>
+          <div style="font-size:12px;color:#909399;margin-bottom:8px">拖拽调整列顺序 / 勾选显示列</div>
+          <div
+            v-for="c in colOptions"
+            :key="c.key"
+            draggable="true"
+            class="col-sort-item"
+            @dragstart="onColDragStart(c)"
+            @dragover.prevent="onColDragOver(c)"
+            @drop="onColDrop"
+          >
+            <i class="el-icon-rank" style="cursor:grab;color:#c0c4cc;margin-right:4px" />
+            <el-checkbox v-model="c.visible" style="margin-left:0" @change="saveColConfig">{{ c.label }}</el-checkbox>
+          </div>
         </div>
         <el-button slot="reference" size="small" icon="el-icon-setting">列</el-button>
       </el-popover>
@@ -101,73 +110,56 @@
       style="width:100%;margin-top:12px"
       @selection-change="handleSelectionChange"
       @sort-change="handleSortChange"
+      @row-click="handleRowClick"
     >
       <el-table-column type="selection" width="40" />
       <el-table-column prop="fqdn" label="FQDN" min-width="160" show-overflow-tooltip sortable="custom">
         <template slot-scope="{ row }">
-          <router-link :to="{ name: 'mdlServerDetail', params: { id: row.id } }" style="color:#409eff;text-decoration:none">
+          <router-link :to="{ name: 'mdlServerDetail', params: { id: row.id } }" style="color:#409eff;text-decoration:none" @click.native.stop>
             {{ row.fqdn }}
           </router-link>
         </template>
       </el-table-column>
-      <el-table-column v-if="visibleCols.includes('ip')" prop="ip" label="IP 地址" width="140" sortable="custom" />
-      <el-table-column v-if="visibleCols.includes('service_name')" prop="service_name" label="服务名" width="140" sortable="custom" />
-      <el-table-column v-if="visibleCols.includes('labels')" label="标签" width="160">
+      <template v-for="col in visibleColOptions">
+        <el-table-column v-if="col.key === 'ip'" :key="col.key" prop="ip" label="IP 地址" width="140" sortable="custom" />
+        <el-table-column v-else-if="col.key === 'service_name'" :key="col.key" prop="service_name" label="服务名" width="140" sortable="custom" />
+        <el-table-column v-else-if="col.key === 'labels'" :key="col.key" label="标签" width="160">
+          <template slot-scope="{ row }">
+            <el-tag v-for="lbl in (row.labels || [])" :key="lbl.id" size="mini" style="margin-right:4px;margin-bottom:2px">{{ lbl.name }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column v-else-if="col.key === 'init_status'" :key="col.key" label="状态" width="110" align="center">
+          <template slot-scope="{ row }">
+            <el-tag :type="initStatusType(row.init_status)" size="small" effect="plain">{{ initStatusLabel(row.init_status) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column v-else-if="col.key === 'install_dir'" :key="col.key" prop="install_dir" label="安装目录" min-width="160" show-overflow-tooltip sortable="custom">
+          <template slot-scope="{ row }"><span class="mono">{{ row.install_dir }}</span></template>
+        </el-table-column>
+        <el-table-column v-else-if="col.key === 'backups_dir'" :key="col.key" prop="backups_dir" label="备份目录" min-width="140" show-overflow-tooltip sortable="custom">
+          <template slot-scope="{ row }"><span class="mono">{{ row.backups_dir }}</span></template>
+        </el-table-column>
+        <el-table-column v-else-if="col.key === 'remote_python'" :key="col.key" prop="remote_python" label="Python 路径" width="180" show-overflow-tooltip sortable="custom">
+          <template slot-scope="{ row }"><span class="mono">{{ row.remote_python }}</span></template>
+        </el-table-column>
+      </template>
+      <el-table-column label="操作" width="220" align="center" fixed="right">
         <template slot-scope="{ row }">
-          <el-tag
-            v-for="lbl in (row.labels || [])"
-            :key="lbl.id"
-            size="mini"
-            style="margin-right:4px;margin-bottom:2px"
-          >{{ lbl.name }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column v-if="visibleCols.includes('init_status')" label="状态" width="110" align="center">
-        <template slot-scope="{ row }">
-          <el-tag
-            :type="initStatusType(row.init_status)"
-            size="small"
-            effect="plain"
-          >{{ initStatusLabel(row.init_status) }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column v-if="visibleCols.includes('install_dir')" prop="install_dir" label="安装目录" min-width="160" show-overflow-tooltip sortable="custom">
-        <template slot-scope="{ row }">
-          <span class="mono">{{ row.install_dir }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column v-if="visibleCols.includes('backups_dir')" prop="backups_dir" label="备份目录" min-width="140" show-overflow-tooltip sortable="custom">
-        <template slot-scope="{ row }">
-          <span class="mono">{{ row.backups_dir }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column v-if="visibleCols.includes('remote_python')" prop="remote_python" label="Python 路径" width="180" show-overflow-tooltip sortable="custom">
-        <template slot-scope="{ row }">
-          <span class="mono">{{ row.remote_python }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="200" align="center" fixed="right">
-        <template slot-scope="{ row }">
-          <el-button size="mini" type="text" icon="el-icon-edit" @click="handleEdit(row)">编辑</el-button>
-
-          <!-- 未初始化 / 初始化失败 → 初始化 -->
+          <el-button size="mini" type="text" icon="el-icon-view" @click.stop="handleViewDetail(row)">详情</el-button>
+          <el-button size="mini" type="text" icon="el-icon-edit" @click.stop="handleEdit(row)">编辑</el-button>
           <el-tooltip v-if="row.init_status === 'initializing'" content="初始化进行中，请等待完成" placement="top">
             <span><el-button size="mini" type="text" icon="el-icon-loading" disabled>初始化中</el-button></span>
           </el-tooltip>
           <el-button
             v-else-if="row.init_status === 'uninitialized' || row.init_status === 'failed'"
-            size="mini" type="text" icon="el-icon-s-tools"
-            style="color:#e6a23c"
-            @click="handleInit(row)"
+            size="mini" type="text" icon="el-icon-s-tools" style="color:#e6a23c"
+            @click.stop="handleInit(row)"
           >{{ row.init_status === 'failed' ? '重新初始化' : '初始化' }}</el-button>
-
-          <!-- 运行中 → 变更配置 + 重新初始化 -->
           <template v-else-if="row.init_status === 'ready'">
-            <el-button size="mini" type="text" icon="el-icon-setting" style="color:#409eff" @click="handleConfigChange(row)">变更配置</el-button>
-            <el-button size="mini" type="text" icon="el-icon-s-tools" style="color:#909399" @click="handleReinit(row)">重新初始化</el-button>
+            <el-button size="mini" type="text" icon="el-icon-setting" style="color:#409eff" @click.stop="handleConfigChange(row)">变更配置</el-button>
+            <el-button size="mini" type="text" icon="el-icon-s-tools" style="color:#909399" @click.stop="handleReinit(row)">重新初始化</el-button>
           </template>
-
-          <el-button size="mini" type="text" icon="el-icon-delete" style="color:#f56c6c" @click="handleDelete(row)">删除</el-button>
+          <el-button size="mini" type="text" icon="el-icon-delete" style="color:#f56c6c" @click.stop="handleDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -330,6 +322,56 @@
       </div>
     </el-dialog>
 
+    <!-- 服务器详情弹窗 -->
+    <el-dialog
+      :visible.sync="showDetail"
+      :title="detailServer ? detailServer.fqdn : '服务器详情'"
+      width="680px"
+      :close-on-click-modal="false"
+      append-to-body
+    >
+      <template v-if="detailServer">
+        <el-descriptions :column="2" size="small" border>
+          <el-descriptions-item label="FQDN">{{ detailServer.fqdn }}</el-descriptions-item>
+          <el-descriptions-item label="IP 地址">{{ detailServer.ip }}</el-descriptions-item>
+          <el-descriptions-item label="服务名">{{ detailServer.service_name || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="SSH 用户">{{ detailServer.user || 'root' }}</el-descriptions-item>
+          <el-descriptions-item label="安装目录" :span="2">
+            <span class="mono">{{ detailServer.install_dir || '-' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="备份目录" :span="2">
+            <span class="mono">{{ detailServer.backups_dir || '-' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="Python 路径" :span="2">
+            <span class="mono">{{ detailServer.remote_python || '-' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="Consul 地址" :span="2">
+            <span class="mono" style="word-break:break-all">{{ detailServer.consul_space || '-' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="Consul Token">
+            <span class="mono">{{ detailServer.consul_token ? '******' : '-' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="配置文件">{{ detailServer.consul_files || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="状态">
+            <el-tag :type="initStatusType(detailServer.init_status)" size="small" effect="plain">
+              {{ initStatusLabel(detailServer.init_status) }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="标签">
+            <el-tag v-for="lbl in (detailServer.labels || [])" :key="lbl.id" size="mini" style="margin-right:4px">{{ lbl.name }}</el-tag>
+            <span v-if="!detailServer.labels || detailServer.labels.length === 0" style="color:#c0c4cc">-</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="创建时间">{{ detailServer.created_time | formatTime }}</el-descriptions-item>
+          <el-descriptions-item label="更新时间">{{ detailServer.last_updated_time | formatTime }}</el-descriptions-item>
+        </el-descriptions>
+      </template>
+      <div slot="footer">
+        <el-button size="small" @click="showDetail = false">关闭</el-button>
+        <el-button size="small" type="primary" @click="() => { showDetail = false; handleEdit(detailServer) }">编辑</el-button>
+        <el-button size="small" type="success" @click="() => { showDetail = false; $router.push({ name: 'mdlServerDetail', params: { id: detailServer.id } }) }">systemd 管理</el-button>
+      </div>
+    </el-dialog>
+
   </div>
 </template>
 
@@ -355,6 +397,9 @@ export default {
         return asc ? av.localeCompare(bv) : bv.localeCompare(av)
       })
     },
+    visibleColOptions() {
+      return this.colOptions.filter(c => c.visible)
+    },
   },
   data() {
     return {
@@ -377,17 +422,20 @@ export default {
       sortOrder: '',
       allLabels: [],
       newLabelName: '',
-      // 自定义列
+      // 自定义列（含 visible + 拖拽排序）
       colOptions: [
-        { key: 'ip',            label: 'IP 地址' },
-        { key: 'service_name',  label: '服务名' },
-        { key: 'labels',        label: '标签' },
-        { key: 'init_status',   label: '状态' },
-        { key: 'install_dir',   label: '安装目录' },
-        { key: 'backups_dir',   label: '备份目录' },
-        { key: 'remote_python', label: 'Python 路径' },
+        { key: 'ip',            label: 'IP 地址',    visible: true },
+        { key: 'service_name',  label: '服务名',     visible: true },
+        { key: 'labels',        label: '标签',       visible: true },
+        { key: 'init_status',   label: '状态',       visible: true },
+        { key: 'install_dir',   label: '安装目录',   visible: true },
+        { key: 'backups_dir',   label: '备份目录',   visible: true },
+        { key: 'remote_python', label: 'Python 路径', visible: true },
       ],
-      visibleCols: ['ip', 'service_name', 'labels', 'init_status', 'install_dir', 'backups_dir', 'remote_python'],
+      colDragSource: null,
+      // 详情弹窗
+      showDetail: false,
+      detailServer: null,
       // 操作日志
       showOpLog: false,
       opLogLoading: false,
@@ -412,6 +460,7 @@ export default {
     },
   },
   created() {
+    this.loadColConfig()
     this.fetchLabels()
     this.fetchServers()
   },
@@ -620,6 +669,64 @@ export default {
     initStatusType(s) {
       return { uninitialized: 'info', initializing: 'warning', ready: 'success', failed: 'danger', retired: '' }[s] || 'info'
     },
+
+    // 列配置持久化
+    loadColConfig() {
+      try {
+        const saved = localStorage.getItem('mdl_server_col_config')
+        if (!saved) return
+        const config = JSON.parse(saved)  // [{key, visible}, ...]
+        const keyOrder = config.map(c => c.key)
+        const visMap = {}
+        config.forEach(c => { visMap[c.key] = c.visible })
+        // 按保存的顺序重排，未知列保留在末尾
+        const known = keyOrder.filter(k => this.colOptions.some(c => c.key === k))
+        const unknown = this.colOptions.filter(c => !known.includes(c.key))
+        const ordered = [
+          ...known.map(k => {
+            const col = this.colOptions.find(c => c.key === k)
+            return { ...col, visible: visMap[k] !== undefined ? visMap[k] : col.visible }
+          }),
+          ...unknown,
+        ]
+        this.colOptions = ordered
+      } catch {}
+    },
+    saveColConfig() {
+      try {
+        const config = this.colOptions.map(c => ({ key: c.key, visible: c.visible }))
+        localStorage.setItem('mdl_server_col_config', JSON.stringify(config))
+      } catch {}
+    },
+
+    // 列拖拽排序
+    onColDragStart(col) {
+      this.colDragSource = col
+    },
+    onColDragOver(col) {
+      if (!this.colDragSource || col.key === this.colDragSource.key) return
+      const opts = this.colOptions
+      const fromIdx = opts.findIndex(c => c.key === this.colDragSource.key)
+      const toIdx = opts.findIndex(c => c.key === col.key)
+      if (fromIdx < 0 || toIdx < 0) return
+      opts.splice(toIdx, 0, opts.splice(fromIdx, 1)[0])
+    },
+    onColDrop() {
+      this.colDragSource = null
+      this.saveColConfig()
+    },
+
+    // 行点击 → 详情弹窗
+    handleRowClick(row) {
+      this.detailServer = row
+      this.showDetail = true
+    },
+
+    // 详情按钮
+    handleViewDetail(row) {
+      this.detailServer = row
+      this.showDetail = true
+    },
   },
 }
 </script>
@@ -652,5 +759,18 @@ export default {
   white-space: pre-wrap;
   word-break: break-all;
   font-family: 'Consolas', 'Monaco', monospace;
+}
+.col-sort-item {
+  display: flex;
+  align-items: center;
+  padding: 2px 0;
+  cursor: default;
+  border-radius: 3px;
+}
+.col-sort-item:hover {
+  background: #f5f7fa;
+}
+.col-sort-item[draggable="true"] {
+  user-select: none;
 }
 </style>

@@ -88,8 +88,9 @@ class MdlReleaseDetailService(ReleaseDetailService):
             raise Exception("发布对象的格式异常")
         server_fqdn = obj_list[0]
         service_name = obj_list[2]
+        executable = getattr(module, "executable", None) or "feeder_handler"
         self._create_ansible_host(server_fqdn, service_name)
-        self._create_ansible_host_vars(server_fqdn, service_name)
+        self._create_ansible_host_vars(server_fqdn, service_name, executable=executable)
         # 2. 如果是回滚操作则回退配置
         if is_rollback:
             self.rollback_config(module)
@@ -106,7 +107,7 @@ class MdlReleaseDetailService(ReleaseDetailService):
                                                       cmdline_args=['ansi/mdl/deploy_feeder.yml', '-i',
                                                                     'ansi/mdl/hosts',
                                                                     '--extra-vars',
-                                                                    'version={}'.format(release_version)],
+                                                                    'version={} executable={}'.format(release_version, executable)],
                                                       envvars=_env)
         elif module.type == 'config':
             out, err, rc = ansible_runner.run_command(executable_cmd='ansible-playbook',
@@ -174,16 +175,20 @@ class MdlReleaseDetailService(ReleaseDetailService):
         data = MdlServer.objects.filter(fqdn=server, service_name=service_name).values("user", "remote_python",
                                                                                        "consul_space", "consul_token",
                                                                                        "install_dir", "backups_dir",
-                                                                                       "service_name", "consul_files")
+                                                                                       "service_name", "consul_files",
+                                                                                       "executable")
         #  2. 生成对应的文件
         import os as _os
         _os.makedirs(_os.path.dirname(ansible_host_vars_path), exist_ok=True)
+        host_vars = dict(data[0])
+        if executable:
+            host_vars["executable"] = executable
         with open(ansible_host_vars_path, "w") as f:
-            yaml.dump(data[0], f)
+            yaml.dump(host_vars, f)
         # 3. 验证是否正确
         with open(ansible_host_vars_path) as f:
             file_data = yaml.load(f, Loader=yaml.FullLoader)
-            if file_data == data[0]:
+            if file_data == host_vars:
                 return
             raise Exception("ansible host_vars文件生成异常")
 
@@ -206,37 +211,50 @@ class MdlReleaseDetailService(ReleaseDetailService):
         time.sleep(30)
         username = Constance.get_value("ansible_ssh_user")
         password = Constance.get_value("ansible_ssh_pass")
-        install_dir = MdlServer.objects.get(fqdn=server, service_name=service_name).install_dir
-        log_file = "/".join(install_dir.split("/")[:-1]) + "/logs/feeder_handler.log"
+        mdl_server = MdlServer.objects.get(fqdn=server, service_name=service_name)
+        install_dir = mdl_server.install_dir
+        executable = mdl_server.executable or "feeder_handler"
+        log_file = "/".join(install_dir.split("/")[:-1]) + "/logs/{}.log".format(executable)
         cmd = """grep -a $(date '+%Y-%m-%d') {} | awk -v dt="$(date '+%Y-%m-%d %T' -d '-1 minutes')" -F, '$1 > dt'""".format(
             log_file)
         res = SshClient(ip=ip, username=username, password=password).send_cmd(cmd)
-        self.release_detail.log = self.release_detail.log + "feeder_handler.log信息如下：\n" + "\n".join(res)
+        self.release_detail.log = self.release_detail.log + "{}.log信息如下：
+".format(executable) + "
+".join(res)
         self.release_detail.save()
 
     def deploy_config(self, module):
         """
-        发布配置 生产环境每次发布都会同步一次git配置文件
+        发布配置：列出 GitLab 目录下所有配置文件，全部推送到 Consul
         """
-        # 1. 获取对应的git配置文件
         obj_list = module.release_object.split("__")
         if len(obj_list) != 3:
             raise Exception("发布对象的格式异常")
         server_fqdn = obj_list[0]
         service_name = obj_list[2]
         mdl_server_obj = MdlServer.objects.get(fqdn=server_fqdn, service_name=service_name)
-        # 2. 发布配置
-        if mdl_server_obj.config_git_url:
-            self.release_detail.set_log("{} 开始配置发布，gitlab路径{}".format(module.release_object, mdl_server_obj.config_git_url), self.user)
-            # 1 下载gitlab
-            file_path = mdl_server_obj.config_git_url.replace("http://git.datayes.com/consul/mdl/-/blob/master/", "")
-            file_content = GitlabClient().get_project_file(file_path=file_path)
-            # 2 上传到consul
-            key = mdl_server_obj.consul_space.split("/kv/")[1] + mdl_server_obj.config_git_url.split("/")[-1]
-            ConsulClient().put(key=key, value=file_content.encode("utf-8"))
-            self.release_detail.set_log("{} 配置发布成功".format(module.release_object), self.user)
-        else:
-            self.release_detail.set_log("{} 无配置发布".format(module.release_object), self.user)
+
+        # consul_space: http://consul.wmcloud.com/v1/kv/configs/mdl/forward/forward_xxx/
+        # consul_kv_prefix: configs/mdl/forward/forward_xxx/
+        consul_kv_prefix = mdl_server_obj.consul_space.split("/v1/kv/")[-1]
+        # git_dir: forward/forward_xxx  (去掉顶层 configs/mdl/ 前缀，去掉末尾斜杠)
+        git_dir = "/".join(consul_kv_prefix.rstrip("/").split("/")[2:])
+
+        gitlab_client = GitlabClient()
+        filenames = gitlab_client.list_directory_files(git_dir)
+        if not filenames:
+            self.release_detail.set_log("{} Git目录无文件，跳过配置发布".format(module.release_object), self.user)
+            return
+
+        self.release_detail.set_log("{} 开始配置发布，目录：{}，文件：{}".format(
+            module.release_object, git_dir, ", ".join(filenames)), self.user)
+        consul_client = ConsulClient()
+        for filename in filenames:
+            file_content = gitlab_client.get_project_file(file_path="{}/{}".format(git_dir, filename))
+            consul_key = consul_kv_prefix + filename
+            consul_client.put(key=consul_key, value=file_content.encode("utf-8"))
+            self.release_detail.set_log("{} {} 推送成功".format(module.release_object, filename), self.user)
+        self.release_detail.set_log("{} 配置发布完成".format(module.release_object), self.user)
 
     def rollback_config(self, module):
         """

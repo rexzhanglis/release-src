@@ -207,6 +207,15 @@
               />
               <el-table-column v-if="form.type==='version'" prop="release_version" label="发布版本"/>
               <el-table-column prop="release_object" label="发布对象"/>
+              <el-table-column v-if="form.type==='version'" label="可执行文件" width="160px">
+                <template slot-scope="{row}">
+                  <el-select v-model="row.executable" size="mini" placeholder="选择可执行文件">
+                    <el-option label="feeder_handler" value="feeder_handler"/>
+                    <el-option label="feeder_receive" value="feeder_receive"/>
+                    <el-option label="feeder_client" value="feeder_client"/>
+                  </el-select>
+                </template>
+              </el-table-column>
               <el-table-column label="操作" width="120px">>
                 <template slot-scope="{row}">
                   <el-button
@@ -390,6 +399,7 @@ export default {
               temp.release_version = response.data
               temp.release_object = item
               temp.config_file = ''
+              temp.executable = 'feeder_handler'
               this.form.selectList.push(temp)
             })
           })

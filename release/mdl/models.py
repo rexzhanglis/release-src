@@ -38,8 +38,8 @@ class MdlServer(TimestampedModel):
     service_name = models.CharField("服务名", max_length=100)
     is_consistent = models.BooleanField("是否与生产信息一致", default=True)
     check_detail = models.CharField("检查结果详细信息", null=True, max_length=200, blank=True)
-    consul_files = models.CharField("consul中的配置文件", default="feeder_handler.cfg", max_length=50,
-                                    help_text="如果不是feeder_handler.cfg配置文件，请改成实际的配置文件名称")
+    consul_files = models.CharField("consul中的配置文件", default="feeder_handler.cfg", max_length=200,
+                                    help_text="Consul 中的配置文件名，多个用逗号分隔，如 feeder_handler.cfg,feeder_receiver.cfg")
 
     def __str__(self):
         return self.fqdn + "_" + self.ip + "_" + self.service_name

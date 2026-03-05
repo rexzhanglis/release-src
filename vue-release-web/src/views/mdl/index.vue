@@ -358,7 +358,7 @@ export default {
         this.total = response.data.count
         this.list = []
         temp.forEach(item => {
-          item.type = item.release_contents[0].type
+          item.type = item.release_contents[0] ? item.release_contents[0].type : ''
           this.list.push(item)
         })
       })
@@ -500,8 +500,8 @@ export default {
     handleEdit(row) {
       this.form = Object.assign({}, row)
       this.dialogUpdateEnable = true
-      this.form.type = row.release_contents[0].type
-      this.form.issue_key = row.release_contents[0].issue_key
+      this.form.type = row.release_contents[0] ? row.release_contents[0].type : 'version'
+      this.form.issue_key = row.release_contents[0] ? row.release_contents[0].issue_key : ''
       this.form.selectList = row.release_contents.map(v => {
         this.$set(v, 'edit', false)
         return v

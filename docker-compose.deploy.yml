@@ -4,7 +4,7 @@ services:
 
   # ── 后端服务 ───────────────────────────────────────────────
   release-backend:
-    image: release-backend:v1.0.0
+    image: registry.datayes.com/automation/release-backend:v1.0.0
     container_name: release-backend
     restart: always
     environment:
@@ -25,13 +25,16 @@ services:
       # Ansible 配置
       - ANSIBLE_SSH_USER=zhixiong.zeng
       - ANSIBLE_SSH_PASS=datayes@123
+      # Consul entrypoint 配置（用于启动时从 Consul 拉取 settings.py 和 supervisor 配置）
+      - CONSUL_SERVER=http://consul.wmcloud.com
+      - CONSUL_TOKEN=dbb8cd09-96db-36f8-fcba-a3f84e496241
+      - OVERWRITE_CONSUL_PATH_FOLDER=/container/devops/devops-release/latest/
     ports:
       - "8000:8000"
-    command: gunicorn -c /datayes/release/conf/gunicorn.conf.py release.wsgi:application
 
   # ── 前端服务 ───────────────────────────────────────────────
   release-web:
-    image: release-web:v1.0.0
+    image: registry.datayes.com/automation/release-web:v1.0.0
     container_name: release-web
     restart: always
     environment:

@@ -27,7 +27,7 @@ services:
       - ANSIBLE_SSH_PASS=datayes@123
     ports:
       - "8000:8000"
-    command: python manage.py runserver 0.0.0.0:8000
+    command: gunicorn -c /datayes/release/conf/gunicorn.conf.py release.wsgi:application
 
   # ── 前端服务 ───────────────────────────────────────────────
   release-web:

@@ -9,10 +9,10 @@ gunicorn -c conf/gunicorn.conf.py release.wsgi:application 运行命令
 """
 import multiprocessing
 
-bind = '127.0.0.1:8000'
+bind = '0.0.0.0:8000'
 backlog = 512
 chdir = '/datayes/release'
-timeout = 5
+timeout = 120
 worker_class = 'sync'
 
 workers = multiprocessing.cpu_count()  # 进程数

@@ -19,5 +19,8 @@ service cron start
 # 自动执行数据库迁移（新表建表、字段变更等）
 python manage.py migrate --noinput
 
+# 注册定时任务
+python manage.py crontab add
+
 /usr/bin/supervisord
 

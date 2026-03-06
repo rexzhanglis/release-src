@@ -119,7 +119,14 @@ export default {
           }).catch(() => {})
         }
       } catch (e) {
-        const msg = (e.response && e.response.data && e.response.data.message) || e.message || '操作失败'
+        const respData = e.response && e.response.data
+        let msg = (respData && respData.message) || e.message || '操作失败'
+        if (respData && respData.data && typeof respData.data === 'object') {
+          const fieldErrors = Object.entries(respData.data)
+            .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
+            .join('；')
+          if (fieldErrors) msg = fieldErrors
+        }
         this.$message.error(msg)
       } finally {
         this.saving = false

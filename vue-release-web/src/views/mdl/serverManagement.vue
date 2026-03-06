@@ -11,6 +11,21 @@
         prefix-icon="el-icon-search"
         @input="handleSearch"
       />
+      <el-select
+        v-model="filterLabelId"
+        placeholder="按标签过滤"
+        clearable
+        size="small"
+        style="width:150px;margin-left:8px"
+        @change="handleLabelFilter"
+      >
+        <el-option
+          v-for="label in allLabels"
+          :key="label.id"
+          :label="label.name"
+          :value="label.id"
+        />
+      </el-select>
       <el-button
         type="primary"
         size="small"
@@ -161,6 +176,7 @@ export default {
       page: 1,
       pageSize: 20,
       searchQ: '',
+      filterLabelId: '',
       searchTimer: null,
       showForm: false,
       currentHost: null,
@@ -179,6 +195,7 @@ export default {
       try {
         const res = await getHosts({
           q: this.searchQ || undefined,
+          label_id: this.filterLabelId || undefined,
           page: this.page,
           page_size: this.pageSize,
         })
@@ -207,6 +224,11 @@ export default {
         this.page = 1
         this.fetchHosts()
       }, 400)
+    },
+
+    handleLabelFilter() {
+      this.page = 1
+      this.fetchHosts()
     },
 
     handlePageChange(p) {

@@ -1,12 +1,30 @@
 <template>
   <el-dialog
     :title="isEdit ? '编辑服务实例' : '新增服务实例'"
+    @open="onOpen"
     :visible.sync="visible"
     width="560px"
     :close-on-click-modal="false"
     @close="resetForm"
   >
     <el-form ref="form" :model="form" :rules="rules" label-width="110px" size="small">
+      <el-form-item v-if="!isEdit && existingServices.length" label="从已有复制">
+        <el-select
+          v-model="copySourceId"
+          placeholder="选择一个已有实例作为模板"
+          clearable
+          size="small"
+          style="width:100%"
+          @change="handleCopySource"
+        >
+          <el-option
+            v-for="s in existingServices"
+            :key="s.id"
+            :label="s.service_name"
+            :value="s.id"
+          />
+        </el-select>
+      </el-form-item>
       <el-form-item label="服务名" prop="service_name">
         <el-input v-model="form.service_name" placeholder="如 mdl-forward1" :disabled="isEdit" />
       </el-form-item>
@@ -50,10 +68,12 @@ export default {
     value: { type: Boolean, default: false },
     hostId: { type: [Number, String], required: true },
     server: { type: Object, default: null },
+    existingServices: { type: Array, default: () => [] },
   },
   data() {
     return {
       saving: false,
+      copySourceId: null,
       form: {
         service_name: '',
         role_name: '',
@@ -100,7 +120,11 @@ export default {
     },
   },
   methods: {
+    onOpen() {
+      this.copySourceId = null
+    },
     resetForm() {
+      this.copySourceId = null
       this.form = {
         service_name: '',
         role_name: '',
@@ -110,6 +134,22 @@ export default {
         consul_token: '',
         consul_files: 'feeder_handler.cfg',
         config_git_url: '',
+      }
+      this.$nextTick(() => { this.$refs.form && this.$refs.form.clearValidate() })
+    },
+    handleCopySource(id) {
+      if (!id) return
+      const src = this.existingServices.find(s => s.id === id)
+      if (!src) return
+      this.form = {
+        service_name: '',
+        role_name: src.role_name || '',
+        install_dir: src.install_dir || '',
+        backups_dir: src.backups_dir || '',
+        consul_space: src.consul_space || '',
+        consul_token: src.consul_token || '',
+        consul_files: src.consul_files || 'feeder_handler.cfg',
+        config_git_url: src.config_git_url || '',
       }
       this.$nextTick(() => { this.$refs.form && this.$refs.form.clearValidate() })
     },

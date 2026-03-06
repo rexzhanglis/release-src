@@ -526,7 +526,7 @@ def fetch_heartbeat(ip, fqdn, port):
 
 def search_heartbeat(service_id, msg_id):
     close_old_connections()
-    servers = list(MdlServer.objects.filter(init_status='ready'))
+    servers = list(MdlServer.objects.filter(init_status='ready').select_related('host'))
     if not servers:
         return [], []
 
@@ -535,9 +535,9 @@ def search_heartbeat(service_id, msg_id):
     seen_ips = set()
     server_infos = []
     for s in servers:
-        if s.ip not in seen_ips:
-            seen_ips.add(s.ip)
-            server_infos.append((s.ip, s.fqdn, _get_http_port(s.ip)))
+        if s.host.ip not in seen_ips:
+            seen_ips.add(s.host.ip)
+            server_infos.append((s.host.ip, s.host.fqdn, _get_http_port(s.host.ip)))
 
     results = []
     unreachable = []

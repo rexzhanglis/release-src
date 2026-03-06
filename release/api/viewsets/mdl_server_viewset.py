@@ -66,6 +66,9 @@ class HostSerializer(serializers.ModelSerializer):
         fields = ['id', 'fqdn', 'ip', 'user', 'remote_python', 'init_status',
                   'created_time', 'last_updated_time', 'service_count']
         read_only_fields = ['id', 'init_status', 'created_time', 'last_updated_time', 'service_count']
+        extra_kwargs = {
+            'fqdn': {'error_messages': {'unique': '该 FQDN 已存在，请勿重复添加'}},
+        }
 
     def get_service_count(self, obj):
         return obj.services.count()
@@ -81,6 +84,9 @@ class HostViewSet(viewsets.ModelViewSet):
         if q:
             from django.db.models import Q
             qs = qs.filter(Q(fqdn__icontains=q) | Q(ip__icontains=q))
+        label_id = self.request.query_params.get('label_id', '').strip()
+        if label_id:
+            qs = qs.filter(services__label__id=label_id).distinct()
         return qs
 
     def destroy(self, request, *args, **kwargs):

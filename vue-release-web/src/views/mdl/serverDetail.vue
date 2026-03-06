@@ -64,6 +64,7 @@
             </el-button>
             <el-button size="mini" type="text" icon="el-icon-edit" @click.stop="handleEditService(row)">编辑</el-button>
             <el-button
+              v-if="row.init_status !== 'ready'"
               size="mini" type="text" icon="el-icon-setting"
               style="color:#409eff" @click.stop="handleInitService(row)"
             >初始化</el-button>
@@ -333,6 +334,7 @@
       v-model="showServiceForm"
       :host-id="routeId"
       :server="currentService"
+      :existing-services="currentService ? [] : mdlServices"
       @success="fetchMdlServices"
     />
 

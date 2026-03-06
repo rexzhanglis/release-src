@@ -5,13 +5,28 @@ from django.db import models
 from common.basemodels import TimestampedModel
 
 
+class Host(TimestampedModel):
+    """
+    物理机/虚机，一台机器一条记录。
+    一台机器上可部署多个 MdlServer 服务实例。
+    """
+    fqdn          = models.CharField("FQDN", max_length=100, unique=True)
+    ip            = models.CharField("IP 地址", max_length=100)
+    user          = models.CharField("SSH 用户", max_length=30, default="root")
+    remote_python = models.CharField("远端 Python 路径", max_length=100, default="/usr/bin/python3")
+
+    def __str__(self):
+        return f"{self.fqdn} ({self.ip})"
+
+    class Meta:
+        verbose_name = "物理机"
+        verbose_name_plural = "物理机"
+
+
 class MdlServer(TimestampedModel):
     """
-    mdl server 部署上线信息
-    fqdn和service_name组成唯一索引
-    一台机器上可能部署多个服务
-    role_name 定义的是服务所处的角色
-    install_dir /datayes/{role_name}/bin/
+    MDL 服务实例，一台机器上可部署多个服务（service_name 不同）。
+    role_name 定义服务角色，install_dir 格式：/datayes/{role_name}/bin/
     """
     INIT_STATUS_CHOICES = [
         ('uninitialized', '未初始化'),
@@ -20,15 +35,16 @@ class MdlServer(TimestampedModel):
         ('failed',        '初始化失败'),
         ('retired',       '已退役'),
     ]
+    # 关联物理机
+    host = models.ForeignKey(
+        Host, verbose_name="物理机", on_delete=models.CASCADE,
+        related_name="services"
+    )
     init_status = models.CharField(
         "初始化状态", max_length=20,
         choices=INIT_STATUS_CHOICES, default='uninitialized'
     )
-    fqdn = models.CharField("fqdn", max_length=100)
-    role_name = models.CharField("角色名称", max_length=100, null=True)
-    ip = models.CharField(max_length=100, null=False)
-    user = models.CharField("用户", max_length=30, default="root")
-    remote_python = models.CharField("远端python", max_length=100)
+    role_name = models.CharField("角色名称", max_length=100, null=True, blank=True)
     config_git_url = models.CharField("配置文件git链接", max_length=200, null=True, blank=True,
                                       help_text="生产环境需填git配置文件路径,stg环境不需要")
     consul_space = models.CharField("consul 地址", max_length=300)
@@ -42,10 +58,10 @@ class MdlServer(TimestampedModel):
                                     help_text="Consul 中的配置文件名，多个用逗号分隔，如 feeder_handler.cfg,feeder_receiver.cfg")
 
     def __str__(self):
-        return self.fqdn + "_" + self.ip + "_" + self.service_name
+        return f"{self.host.fqdn}_{self.host.ip}_{self.service_name}"
 
     class Meta:
-        unique_together = ('fqdn', 'service_name',)
+        unique_together = ('host', 'service_name')
 
 
 class Label(TimestampedModel):

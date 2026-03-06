@@ -19,17 +19,17 @@ class CmdbViewSet(viewsets.ModelViewSet):
         release_object = []
         data = {}
         # 机器信息
-        for obj in MdlServer.objects.all():
-            release_object.append(obj.fqdn + "__" + obj.ip + "__" + obj.service_name)
+        for obj in MdlServer.objects.select_related('host').all():
+            release_object.append(obj.host.fqdn + "__" + obj.host.ip + "__" + obj.service_name)
         labels = list(Label.objects.all().values_list("name", flat=True))
         release_object.extend(["label_{}".format(label) for label in labels])
         data["release_object"] = release_object
         # 标签信息
         label_to_server = {}
-        for label in Label.objects.all():
+        for label in Label.objects.prefetch_related('mdl_server__host').all():
             mdl_server = []
             for obj in label.mdl_server.all():
-                mdl_server.append(obj.fqdn + "__" + obj.ip + "__" + obj.service_name)
+                mdl_server.append(obj.host.fqdn + "__" + obj.host.ip + "__" + obj.service_name)
             label_to_server["label_{}".format(label.name)] = mdl_server
         data["label_to_server"] = label_to_server
         return ApiResponse(data=data)

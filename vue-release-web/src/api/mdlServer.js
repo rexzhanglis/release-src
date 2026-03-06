@@ -1,5 +1,29 @@
 import request from '@/utils/request'
 
+// ========== Host（物理机）==========
+
+export function getHosts(params) {
+  return request({ url: '/mdl-hosts/', method: 'get', params })
+}
+
+export function createHost(data) {
+  return request({ url: '/mdl-hosts/', method: 'post', data })
+}
+
+export function getHost(id) {
+  return request({ url: `/mdl-hosts/${id}/`, method: 'get' })
+}
+
+export function updateHost(id, data) {
+  return request({ url: `/mdl-hosts/${id}/`, method: 'put', data })
+}
+
+export function deleteHost(id) {
+  return request({ url: `/mdl-hosts/${id}/`, method: 'delete' })
+}
+
+// ========== MdlServer（服务实例）==========
+
 export function getMdlServers(params) {
   return request({ url: '/mdl-servers/', method: 'get', params })
 }

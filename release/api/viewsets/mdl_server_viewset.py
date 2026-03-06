@@ -33,7 +33,7 @@ except Exception:
 
     ansible_runner = AnsibleRunnerMock()
 
-from mdl.models import MdlServer, ConfigDeployTask, ServiceType, ConfigInstance, ConfigFile, Label, ConfigAuditLog
+from mdl.models import MdlServer, Host, ConfigDeployTask, ServiceType, ConfigInstance, ConfigFile, Label, ConfigAuditLog
 from const.models import Constance
 from common.utils.apiutil import ApiResponse
 
@@ -56,27 +56,74 @@ class LabelViewSet(viewsets.ModelViewSet):
         return qs
 
 
+# ========== Host（物理机）==========
+
+class HostSerializer(serializers.ModelSerializer):
+    service_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Host
+        fields = ['id', 'fqdn', 'ip', 'user', 'remote_python',
+                  'created_time', 'last_updated_time', 'service_count']
+        read_only_fields = ['id', 'created_time', 'last_updated_time', 'service_count']
+
+    def get_service_count(self, obj):
+        return obj.services.count()
+
+
+class HostViewSet(viewsets.ModelViewSet):
+    queryset = Host.objects.all().order_by('fqdn')
+    serializer_class = HostSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        q = self.request.query_params.get('q', '').strip()
+        if q:
+            from django.db.models import Q
+            qs = qs.filter(Q(fqdn__icontains=q) | Q(ip__icontains=q))
+        return qs
+
+    def destroy(self, request, *args, **kwargs):
+        host = self.get_object()
+        if host.services.exists():
+            return Response(
+                {'code': 400, 'message': '该机器下还有服务实例，请先删除所有服务实例再删除机器'},
+                status=drf_status.HTTP_400_BAD_REQUEST
+            )
+        return super().destroy(request, *args, **kwargs)
+
+
+# ========== MdlServer（服务实例）==========
+
 class MdlServerSerializer(serializers.ModelSerializer):
     labels = LabelSerializer(source='label_set', many=True, read_only=True)
     label_ids = serializers.ListField(
         child=serializers.IntegerField(), write_only=True, required=False, default=list
     )
+    # 展开 host 字段，方便前端直接使用
+    fqdn = serializers.CharField(source='host.fqdn', read_only=True)
+    ip = serializers.CharField(source='host.ip', read_only=True)
+    user = serializers.CharField(source='host.user', read_only=True)
+    remote_python = serializers.CharField(source='host.remote_python', read_only=True)
+    host_id = serializers.PrimaryKeyRelatedField(
+        queryset=Host.objects.all(), source='host', write_only=False, required=True
+    )
 
     class Meta:
         model = MdlServer
         fields = [
-            'id', 'fqdn', 'ip', 'role_name', 'user', 'remote_python',
-            'service_name', 'install_dir', 'backups_dir',
+            'id', 'host_id', 'fqdn', 'ip', 'user', 'remote_python',
+            'role_name', 'service_name', 'install_dir', 'backups_dir',
             'consul_space', 'consul_token', 'consul_files',
             'config_git_url', 'is_consistent', 'check_detail',
             'init_status',
             'created_time', 'last_updated_time',
             'labels', 'label_ids',
         ]
-        read_only_fields = ['id', 'init_status', 'created_time', 'last_updated_time']
+        read_only_fields = ['id', 'fqdn', 'ip', 'user', 'remote_python',
+                            'init_status', 'created_time', 'last_updated_time']
 
     def _sync_labels(self, instance, label_ids):
-        # 移除旧关联，添加新关联（从 Label 端操作 M2M）
         for label in Label.objects.filter(mdl_server=instance).exclude(id__in=label_ids):
             label.mdl_server.remove(instance)
         for label in Label.objects.filter(id__in=label_ids):
@@ -97,18 +144,23 @@ class MdlServerSerializer(serializers.ModelSerializer):
 
 
 class MdlServerViewSet(viewsets.ModelViewSet):
-    queryset = MdlServer.objects.all().order_by('service_name', 'fqdn')
+    queryset = MdlServer.objects.select_related('host').all().order_by('service_name', 'host__fqdn')
     serializer_class = MdlServerSerializer
 
     def get_queryset(self):
         qs = super().get_queryset()
         q = self.request.query_params.get('q', '').strip()
         label_id = self.request.query_params.get('label_id', '').strip()
+        host_id = self.request.query_params.get('host_id', '').strip()
         if q:
             from django.db.models import Q
-            qs = qs.filter(Q(fqdn__icontains=q) | Q(ip__icontains=q) | Q(service_name__icontains=q))
+            qs = qs.filter(
+                Q(host__fqdn__icontains=q) | Q(host__ip__icontains=q) | Q(service_name__icontains=q)
+            )
         if label_id:
             qs = qs.filter(label__id=label_id)
+        if host_id:
+            qs = qs.filter(host_id=host_id)
         return qs
 
     def create(self, request, *args, **kwargs):
@@ -149,13 +201,13 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                     service_type=service_type,
                     name=instance_name,
                     defaults={
-                        'host_ip': server.ip,
+                        'host_ip': server.host.ip,
                         'consul_space': server.consul_space or default_consul_space,
                         'install_dir': server.install_dir,
                         'backups_dir': server.backups_dir,
                         'service_name': server.service_name,
                         'consul_files': server.consul_files or 'feeder_handler.cfg',
-                        'remote_python': server.remote_python or '/usr/bin/python3',
+                        'remote_python': server.host.remote_python or '/usr/bin/python3',
                     }
                 )
 
@@ -207,7 +259,7 @@ class MdlServerViewSet(viewsets.ModelViewSet):
         """
         server = self.get_object()
         try:
-            ssh_user = (request.data.get('ssh_user') or '').strip() or os.environ.get('ANSIBLE_SSH_USER', '') or server.user or 'root'
+            ssh_user = (request.data.get('ssh_user') or '').strip() or os.environ.get('ANSIBLE_SSH_USER', '') or server.host.user or 'root'
             ssh_pass = request.data.get('ssh_pass', '').strip()
             if not ssh_pass:
                 try:
@@ -234,10 +286,12 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 if anaconda_file:
                     anaconda_file_data = (anaconda_file.name, anaconda_file.read())
 
+            _server_ip = server.host.ip
+            _server_fqdn = server.host.fqdn
             task = ConfigDeployTask.objects.create(
                 operator=operator,
                 status='running',
-                log=f'[{datetime.now():%Y-%m-%d %H:%M:%S}] 开始初始化系统环境：{server.fqdn} ({server.ip})\n',
+                log=f'[{datetime.now():%Y-%m-%d %H:%M:%S}] 开始初始化系统环境：{_server_fqdn} ({_server_ip})\n',
             )
 
             # 立即将服务器状态置为初始化中
@@ -246,11 +300,9 @@ class MdlServerViewSet(viewsets.ModelViewSet):
 
             # 捕获所有需要的变量，避免闭包引用 request
             _server_id = server.id
-            _server_ip = server.ip
-            _server_fqdn = server.fqdn
             _host_vars_base = {
-                'user': server.user or 'root',
-                'remote_python': server.remote_python or '/opt/anaconda/bin/python',
+                'user': server.host.user or 'root',
+                'remote_python': server.host.remote_python or '/opt/anaconda/bin/python',
                 'consul_space': server.consul_space or '',
                 'consul_token': server.consul_token or '',
                 'install_dir': server.install_dir,
@@ -393,14 +445,14 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 pass
             if not ssh_pass:
                 ssh_pass = os.environ.get('ANSIBLE_SSH_PASS', '')
-            ssh_user = os.environ.get('ANSIBLE_SSH_USER', '') or server.user or 'root'
+            ssh_user = os.environ.get('ANSIBLE_SSH_USER', '') or server.host.user or 'root'
 
             import subprocess as _sp
             import tempfile as _tf
             tmpdir = _tf.mkdtemp(prefix='mdl_systemd_')
             hosts_path = os.path.join(tmpdir, 'hosts')
             with open(hosts_path, 'w') as f:
-                f.write(f"release ansible_ssh_host={server.ip} "
+                f.write(f"release ansible_ssh_host={server.host.ip} "
                         f"ansible_ssh_user={ssh_user} "
                         f"ansible_ssh_pass={ssh_pass}\n")
 
@@ -457,7 +509,7 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                         svc['enabled'] = enabled_lines[i]
 
             shutil.rmtree(tmpdir, ignore_errors=True)
-            return ApiResponse(data={'services': services, 'ip': server.ip})
+            return ApiResponse(data={'services': services, 'ip': server.host.ip})
 
         except Exception as e:
             return Response(
@@ -506,14 +558,14 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 pass
             if not ssh_pass:
                 ssh_pass = os.environ.get('ANSIBLE_SSH_PASS', '')
-            ssh_user = os.environ.get('ANSIBLE_SSH_USER', '') or server.user or 'root'
+            ssh_user = os.environ.get('ANSIBLE_SSH_USER', '') or server.host.user or 'root'
 
             import subprocess as _sp
             import tempfile as _tf
             tmpdir = _tf.mkdtemp(prefix='mdl_systemd_ctrl_')
             hosts_path = os.path.join(tmpdir, 'hosts')
             with open(hosts_path, 'w') as f:
-                f.write(f"release ansible_ssh_host={server.ip} "
+                f.write(f"release ansible_ssh_host={server.host.ip} "
                         f"ansible_ssh_user={ssh_user} "
                         f"ansible_ssh_pass={ssh_pass}\n")
 
@@ -526,7 +578,7 @@ class MdlServerViewSet(viewsets.ModelViewSet):
             if do_consul_pull and ctrl_action in ('restart', 'start'):
                 install_dir = server.install_dir or ''
                 pull_script = install_dir.rstrip('/') + '/consul_pull.py'
-                remote_python = server.remote_python or '/usr/bin/python3'
+                remote_python = server.host.remote_python or '/usr/bin/python3'
                 consul_token = server.consul_token or ''
                 pull_env = f'CONSUL_TOKEN={consul_token} {remote_python} {pull_script}'
                 proc_pull = _sp.run(
@@ -581,14 +633,14 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 pass
             if not ssh_pass:
                 ssh_pass = os.environ.get('ANSIBLE_SSH_PASS', '')
-            ssh_user = os.environ.get('ANSIBLE_SSH_USER', '') or server.user or 'root'
+            ssh_user = os.environ.get('ANSIBLE_SSH_USER', '') or server.host.user or 'root'
 
             import subprocess as _sp
             import tempfile as _tf
             tmpdir = _tf.mkdtemp(prefix='mdl_svc_file_')
             hosts_path = os.path.join(tmpdir, 'hosts')
             with open(hosts_path, 'w') as f:
-                f.write(f"release ansible_ssh_host={server.ip} "
+                f.write(f"release ansible_ssh_host={server.host.ip} "
                         f"ansible_ssh_user={ssh_user} "
                         f"ansible_ssh_pass={ssh_pass}\n")
 
@@ -664,14 +716,14 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 pass
             if not ssh_pass:
                 ssh_pass = os.environ.get('ANSIBLE_SSH_PASS', '')
-            ssh_user = os.environ.get('ANSIBLE_SSH_USER', '') or server.user or 'root'
+            ssh_user = os.environ.get('ANSIBLE_SSH_USER', '') or server.host.user or 'root'
 
             import subprocess as _sp
             import tempfile as _tf
             tmpdir = _tf.mkdtemp(prefix='mdl_svc_manage_')
             hosts_path = os.path.join(tmpdir, 'hosts')
             with open(hosts_path, 'w') as f:
-                f.write(f"release ansible_ssh_host={server.ip} "
+                f.write(f"release ansible_ssh_host={server.host.ip} "
                         f"ansible_ssh_user={ssh_user} "
                         f"ansible_ssh_pass={ssh_pass}\n")
 

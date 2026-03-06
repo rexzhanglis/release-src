@@ -148,7 +148,7 @@ class MdlReleaseDetailService(ReleaseDetailService):
         """
         # 1. 生成获取主机信息 "D:\\dev\\python\\release\\ansi\\mdl\\host"
         ansible_hosts_path = Constance.get_value("ansible_hosts_path")
-        ip = MdlServer.objects.get(fqdn=server, service_name=service_name).ip
+        ip = MdlServer.objects.select_related('host').get(host__fqdn=server, service_name=service_name).host.ip
         ansible_ssh_user = Constance.get_value("ansible_ssh_user")
         ansible_ssh_pass = Constance.get_value("ansible_ssh_pass")
         host_info = "release ansible_ssh_host={} ansible_ssh_user={} ansible_ssh_pass={}".format(ip, ansible_ssh_user,
@@ -172,14 +172,20 @@ class MdlReleaseDetailService(ReleaseDetailService):
         """
         # 1. 生成主机部署信息"D:\\dev\\python\\release\\ansi\\mdl\\host_vars\\release1.yml"
         ansible_host_vars_path = Constance.get_value("ansible_host_vars_path")
-        data = MdlServer.objects.filter(fqdn=server, service_name=service_name).values("user", "remote_python",
-                                                                                       "consul_space", "consul_token",
-                                                                                       "install_dir", "backups_dir",
-                                                                                       "service_name", "consul_files")
+        srv = MdlServer.objects.select_related('host').get(host__fqdn=server, service_name=service_name)
         #  2. 生成对应的文件
         import os as _os
         _os.makedirs(_os.path.dirname(ansible_host_vars_path), exist_ok=True)
-        host_vars = dict(data[0])
+        host_vars = {
+            'user': srv.host.user,
+            'remote_python': srv.host.remote_python,
+            'consul_space': srv.consul_space,
+            'consul_token': srv.consul_token,
+            'install_dir': srv.install_dir,
+            'backups_dir': srv.backups_dir,
+            'service_name': srv.service_name,
+            'consul_files': srv.consul_files,
+        }
         if executable:
             host_vars["executable"] = executable
         with open(ansible_host_vars_path, "w") as f:
@@ -192,10 +198,11 @@ class MdlReleaseDetailService(ReleaseDetailService):
             raise Exception("ansible host_vars文件生成异常")
 
     def _get_current_version(self, server, service_name):
-        ip = MdlServer.objects.get(fqdn=server, service_name=service_name).ip
+        srv = MdlServer.objects.select_related('host').get(host__fqdn=server, service_name=service_name)
+        ip = srv.host.ip
         username = Constance.get_value("ansible_ssh_user")
         password = Constance.get_value("ansible_ssh_pass")
-        install_dir = MdlServer.objects.get(fqdn=server, service_name=service_name).install_dir
+        install_dir = srv.install_dir
         cmd = 'cat {}/version'.format(install_dir)
         res = SshClient(ip=ip, username=username, password=password).send_cmd(cmd)
         return res[0].strip() if res else ''
@@ -205,14 +212,14 @@ class MdlReleaseDetailService(ReleaseDetailService):
         获取最近1分钟内的日志
         grep $(date '+%Y-%m-%d') feeder_handler.log | awk -v dt="$(date '+%Y-%m-%d %T' -d '-2 minutes')" -F, '$1 > dt'
         """
-        ip = MdlServer.objects.get(fqdn=server, service_name=service_name).ip
+        mdl_server = MdlServer.objects.select_related('host').get(host__fqdn=server, service_name=service_name)
+        ip = mdl_server.host.ip
         self.release_detail.set_log("开始抓取{}_{}_{}日志信息....".format(server, ip, service_name), self.user)
         time.sleep(30)
         username = Constance.get_value("ansible_ssh_user")
         password = Constance.get_value("ansible_ssh_pass")
-        mdl_server = MdlServer.objects.get(fqdn=server, service_name=service_name)
         install_dir = mdl_server.install_dir
-        executable = mdl_server.executable or "feeder_handler"
+        executable = getattr(mdl_server, 'executable', None) or "feeder_handler"
         log_file = "/".join(install_dir.split("/")[:-1]) + "/logs/{}.log".format(executable)
         cmd = """grep -a $(date '+%Y-%m-%d') {} | awk -v dt="$(date '+%Y-%m-%d %T' -d '-1 minutes')" -F, '$1 > dt'""".format(
             log_file)
@@ -229,7 +236,7 @@ class MdlReleaseDetailService(ReleaseDetailService):
             raise Exception("发布对象的格式异常")
         server_fqdn = obj_list[0]
         service_name = obj_list[2]
-        mdl_server_obj = MdlServer.objects.get(fqdn=server_fqdn, service_name=service_name)
+        mdl_server_obj = MdlServer.objects.select_related('host').get(host__fqdn=server_fqdn, service_name=service_name)
 
         # consul_space: http://consul.wmcloud.com/v1/kv/configs/mdl/forward/forward_xxx/
         # consul_kv_prefix: configs/mdl/forward/forward_xxx/

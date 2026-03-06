@@ -195,6 +195,45 @@ class ConfigDeployTask(TimestampedModel):
         verbose_name_plural = "配置部署任务"
 
 
+class MdlOperationLog(models.Model):
+    """
+    MDL 服务实例 & systemd 操作日志。
+    记录：新增/编辑/删除/初始化服务实例，systemd start/stop/restart/enable/disable。
+    """
+    ACTION_CHOICES = [
+        ('service_create',  '新增服务实例'),
+        ('service_edit',    '编辑服务实例'),
+        ('service_delete',  '删除服务实例'),
+        ('service_init',    '初始化服务实例'),
+        ('host_init',       '初始化服务器'),
+        ('systemd_start',   'systemd start'),
+        ('systemd_stop',    'systemd stop'),
+        ('systemd_restart', 'systemd restart'),
+        ('systemd_enable',  'systemd enable'),
+        ('systemd_disable', 'systemd disable'),
+    ]
+    STATUS_CHOICES = [
+        ('success', '成功'),
+        ('failed',  '失败'),
+    ]
+    host        = models.ForeignKey(Host, verbose_name="物理机", on_delete=models.CASCADE,
+                                    related_name='operation_logs')
+    service_name = models.CharField("服务名", max_length=100, blank=True, default='')
+    action      = models.CharField("操作类型", max_length=30, choices=ACTION_CHOICES)
+    operator    = models.CharField("操作人", max_length=100, default='system')
+    status      = models.CharField("结果", max_length=20, choices=STATUS_CHOICES, default='success')
+    detail      = models.TextField("详情", blank=True, default='')
+    created_time = models.DateTimeField("操作时间", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "操作日志"
+        verbose_name_plural = "操作日志"
+        ordering = ['-created_time']
+
+    def __str__(self):
+        return f"[{self.action}] {self.host.fqdn}/{self.service_name} {self.status}"
+
+
 class SystemdServiceCache(models.Model):
     """
     systemd 服务状态缓存，由定时任务每5分钟刷新一次。

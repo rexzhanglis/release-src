@@ -30,6 +30,10 @@ export function getHostInitStatus(id, taskId) {
   return request({ url: `/mdl-hosts/${id}/init_status/`, method: 'get', params: { task_id: taskId } })
 }
 
+export function getOperationLogs(hostId, params) {
+  return request({ url: `/mdl-hosts/${hostId}/operation_logs/`, method: 'get', params })
+}
+
 // ========== MdlServer（服务实例）==========
 
 export function getMdlServers(params) {

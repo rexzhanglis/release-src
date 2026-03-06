@@ -332,6 +332,51 @@
       </span>
     </el-dialog>
 
+    <!-- 操作日志 -->
+    <el-card v-if="isHostMode" shadow="never" style="margin-top:16px">
+      <div slot="header" style="display:flex;align-items:center;justify-content:space-between">
+        <span style="font-weight:600">操作日志</span>
+        <el-button size="small" icon="el-icon-refresh" :loading="logsLoading" @click="fetchLogs">刷新</el-button>
+      </div>
+      <el-tabs v-model="logTab" @tab-click="onLogTabChange" size="small">
+        <el-tab-pane label="服务实例操作" name="service" />
+        <el-tab-pane label="systemd 操作" name="systemd" />
+      </el-tabs>
+      <el-table v-loading="logsLoading" :data="logs" size="small" border style="width:100%">
+        <el-table-column prop="created_time" label="时间" width="160" />
+        <el-table-column prop="operator" label="操作人" width="100" />
+        <el-table-column label="操作类型" width="140">
+          <template slot-scope="{ row }">{{ logActionLabel(row.action) }}</template>
+        </el-table-column>
+        <el-table-column prop="service_name" label="服务名" width="160" show-overflow-tooltip />
+        <el-table-column label="结果" width="80" align="center">
+          <template slot-scope="{ row }">
+            <el-tag :type="row.status === 'success' ? 'success' : 'danger'" size="mini" effect="plain">
+              {{ row.status === 'success' ? '成功' : '失败' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="详情" show-overflow-tooltip>
+          <template slot-scope="{ row }">
+            <span style="font-size:12px;color:#909399">{{ row.detail || '-' }}</span>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-pagination
+        v-if="logsTotal > logsPageSize"
+        background
+        layout="prev, pager, next, total"
+        :total="logsTotal"
+        :page-size="logsPageSize"
+        :current-page="logsPage"
+        style="margin-top:10px;text-align:right"
+        @current-change="handleLogsPageChange"
+      />
+      <div v-if="!logsLoading && logs.length === 0" style="text-align:center;padding:24px 0;color:#909399;font-size:13px">
+        暂无操作日志
+      </div>
+    </el-card>
+
     <!-- 新增/编辑服务实例弹窗 -->
     <service-form-modal
       v-if="isHostMode"
@@ -362,6 +407,7 @@ import {
   controlSystemdService,
   getSystemdServiceFile,
   manageSystemdService,
+  getOperationLogs,
 } from '@/api/mdlServer'
 import ServiceFormModal from './components/ServiceFormModal'
 import InitServerModal from './components/InitServerModal'
@@ -390,6 +436,13 @@ export default {
       serviceList: [],
       systemdRefreshedAt: '',
       refreshing: false,
+      // 操作日志
+      logTab: 'service',
+      logs: [],
+      logsTotal: 0,
+      logsPage: 1,
+      logsPageSize: 20,
+      logsLoading: false,
       loading: false,
       svcSearch: '',
       svcStateFilter: '',
@@ -464,6 +517,7 @@ export default {
   created() {
     if (this.isHostMode) {
       this.fetchHost()
+      this.fetchLogs()
     } else {
       this.fetchServer()
     }
@@ -604,6 +658,49 @@ export default {
       this.selectedServices = rows
     },
 
+    // ---- 操作日志 ----
+    async fetchLogs() {
+      if (!this.isHostMode) return
+      this.logsLoading = true
+      try {
+        const res = await getOperationLogs(this.routeId, {
+          log_type: this.logTab,
+          page: this.logsPage,
+          page_size: this.logsPageSize,
+        })
+        const d = res.data || {}
+        this.logs = d.results || []
+        this.logsTotal = d.total || 0
+      } catch (e) {
+        this.$message.error('获取操作日志失败：' + (e.message || ''))
+      } finally {
+        this.logsLoading = false
+      }
+    },
+    onLogTabChange() {
+      this.logsPage = 1
+      this.fetchLogs()
+    },
+    handleLogsPageChange(p) {
+      this.logsPage = p
+      this.fetchLogs()
+    },
+    logActionLabel(action) {
+      const map = {
+        service_create: '新增服务实例',
+        service_edit: '编辑服务实例',
+        service_delete: '删除服务实例',
+        service_init: '初始化服务实例',
+        host_init: '初始化服务器',
+        systemd_start: 'start',
+        systemd_stop: 'stop',
+        systemd_restart: 'restart',
+        systemd_enable: 'enable',
+        systemd_disable: 'disable',
+      }
+      return map[action] || action
+    },
+
     async handleControl(svc, action) {
       const id = this.activeServerIdForApi || this.routeId
       try {
@@ -618,8 +715,10 @@ export default {
         if (res.data && res.data.ok) {
           this.$message.success(action + ' 成功')
           await this.fetchServices()
+          this.fetchLogs()
         } else {
           this.$message.error(action + ' 失败：' + ((res.data && res.data.output) || ''))
+          this.fetchLogs()
         }
       } catch (e) {
         this.$message.error('操作失败：' + (e.message || ''))

@@ -33,9 +33,24 @@ except Exception:
 
     ansible_runner = AnsibleRunnerMock()
 
-from mdl.models import MdlServer, Host, ConfigDeployTask, ServiceType, ConfigInstance, ConfigFile, Label, ConfigAuditLog
+from mdl.models import MdlServer, Host, ConfigDeployTask, ServiceType, ConfigInstance, ConfigFile, Label, ConfigAuditLog, MdlOperationLog
 from const.models import Constance
 from common.utils.apiutil import ApiResponse
+
+
+def _write_op_log(host, action, operator, status='success', service_name='', detail=''):
+    """写 MdlOperationLog，失败不影响主流程。"""
+    try:
+        MdlOperationLog.objects.create(
+            host=host,
+            service_name=service_name,
+            action=action,
+            operator=operator,
+            status=status,
+            detail=detail[:2000],
+        )
+    except Exception:
+        pass
 
 
 class LabelSerializer(serializers.ModelSerializer):
@@ -224,6 +239,35 @@ class HostViewSet(viewsets.ModelViewSet):
             return Response({'code': 404, 'message': '任务不存在'},
                             status=drf_status.HTTP_404_NOT_FOUND)
 
+    @action(detail=True, methods=['get'], url_path='operation_logs')
+    def operation_logs(self, request, pk=None):
+        """
+        查询该物理机的操作日志。
+        GET /mdl-hosts/{id}/operation_logs/?log_type=service&page=1&page_size=20
+        log_type: service（服务实例操作）| systemd（systemd操作）| 不传=全部
+        """
+        host = self.get_object()
+        log_type = request.query_params.get('log_type', '').strip()
+        page = int(request.query_params.get('page', 1))
+        page_size = int(request.query_params.get('page_size', 20))
+
+        qs = MdlOperationLog.objects.filter(host=host)
+        if log_type == 'service':
+            qs = qs.filter(action__in=['service_create', 'service_edit', 'service_delete', 'service_init', 'host_init'])
+        elif log_type == 'systemd':
+            qs = qs.filter(action__startswith='systemd_')
+
+        total = qs.count()
+        offset = (page - 1) * page_size
+        logs = list(qs[offset:offset + page_size].values(
+            'id', 'service_name', 'action', 'operator', 'status', 'detail', 'created_time'
+        ))
+        # 格式化时间
+        for log in logs:
+            if log['created_time']:
+                log['created_time'] = log['created_time'].strftime('%Y-%m-%d %H:%M:%S')
+        return ApiResponse(data={'total': total, 'results': logs})
+
 
 # ========== MdlServer（服务实例）==========
 
@@ -279,6 +323,29 @@ class MdlServerViewSet(viewsets.ModelViewSet):
     queryset = MdlServer.objects.select_related('host').all().order_by('service_name', 'host__fqdn')
     serializer_class = MdlServerSerializer
 
+    def destroy(self, request, *args, **kwargs):
+        server = self.get_object()
+        host, service_name = server.host, server.service_name
+        resp = super().destroy(request, *args, **kwargs)
+        _write_op_log(
+            host=host,
+            service_name=service_name,
+            action='service_delete',
+            operator=getattr(request.user, 'username', 'unknown'),
+        )
+        return resp
+
+    def update(self, request, *args, **kwargs):
+        resp = super().update(request, *args, **kwargs)
+        server = self.get_object()
+        _write_op_log(
+            host=server.host,
+            service_name=server.service_name,
+            action='service_edit',
+            operator=getattr(request.user, 'username', 'unknown'),
+        )
+        return resp
+
     def get_queryset(self):
         qs = super().get_queryset()
         q = self.request.query_params.get('q', '').strip()
@@ -315,6 +382,13 @@ class MdlServerViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         server = serializer.save()
+
+        _write_op_log(
+            host=server.host,
+            service_name=server.service_name,
+            action='service_create',
+            operator=getattr(request.user, 'username', 'unknown'),
+        )
 
         result = {'server': serializer.data, 'config_instance': None, 'git': None}
 
@@ -513,6 +587,19 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                         )
                     except Exception:
                         pass
+                    # 写操作日志
+                    try:
+                        _srv2 = MdlServer.objects.select_related('host').get(id=_server_id)
+                        _write_op_log(
+                            host=_srv2.host,
+                            service_name=_srv2.service_name,
+                            action='service_init',
+                            operator=operator,
+                            status='success' if task.status == 'success' else 'failed',
+                            detail=(task.log or '')[-1000:],
+                        )
+                    except Exception:
+                        pass
 
             threading.Thread(target=run, daemon=True).start()
 
@@ -685,6 +772,14 @@ class MdlServerViewSet(viewsets.ModelViewSet):
             shutil.rmtree(tmpdir, ignore_errors=True)
 
             ok = proc.returncode == 0
+            _write_op_log(
+                host=server.host,
+                service_name=', '.join(services),
+                action=f'systemd_{ctrl_action}',
+                operator=getattr(request.user, 'username', 'unknown'),
+                status='success' if ok else 'failed',
+                detail='\n'.join(output_parts),
+            )
             return ApiResponse(data={
                 'ok': ok,
                 'output': '\n'.join(output_parts),

@@ -163,7 +163,7 @@ class MdlReleaseDetailService(ReleaseDetailService):
                 return
             raise Exception("ansible hosts文件生成异常")
 
-    def _create_ansible_host_vars(self, server, service_name):
+    def _create_ansible_host_vars(self, server, service_name, executable=None):
         """
         创建ansible 主机文件
         1. 生成获取主机信息
@@ -175,8 +175,7 @@ class MdlReleaseDetailService(ReleaseDetailService):
         data = MdlServer.objects.filter(fqdn=server, service_name=service_name).values("user", "remote_python",
                                                                                        "consul_space", "consul_token",
                                                                                        "install_dir", "backups_dir",
-                                                                                       "service_name", "consul_files",
-                                                                                       "executable")
+                                                                                       "service_name", "consul_files")
         #  2. 生成对应的文件
         import os as _os
         _os.makedirs(_os.path.dirname(ansible_host_vars_path), exist_ok=True)

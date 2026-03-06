@@ -335,6 +335,14 @@
       :server="currentService"
       @success="fetchMdlServices"
     />
+
+    <!-- 服务实例初始化弹窗 -->
+    <init-server-modal
+      v-if="isHostMode"
+      v-model="showInitModal"
+      :server="initTargetService"
+      @done="fetchMdlServices"
+    />
   </div>
 </template>
 
@@ -350,12 +358,13 @@ import {
   manageSystemdService,
 } from '@/api/mdlServer'
 import ServiceFormModal from './components/ServiceFormModal'
+import InitServerModal from './components/InitServerModal'
 
 const DEFAULT_SERVICE_CONTENT = '[Unit]\nDescription=MDL Service\nAfter=network.target\n\n[Service]\nLimitNOFILE=1000000\nLimitCORE=infinity\nUser=root\nWorkingDirectory=/datayes/forward/bin\nType=forking\nExecStart=/datayes/forward/bin/feeder_handler -d\nKillMode=process\nTimeoutStopSec=120\nRestart=on-failure\nStandardOutput=null\nStandardError=null\n\n[Install]\nWantedBy=multi-user.target\n'
 
 export default {
   name: 'ServerDetail',
-  components: { ServiceFormModal },
+  components: { ServiceFormModal, InitServerModal },
   data() {
     return {
       // host 模式
@@ -365,6 +374,8 @@ export default {
       activeServerId: null,
       showServiceForm: false,
       currentService: null,
+      showInitModal: false,
+      initTargetService: null,
 
       // server 模式（兼容旧路由）
       server: null,
@@ -509,8 +520,9 @@ export default {
       this.showServiceForm = true
     },
 
-    async handleInitService(row) {
-      this.$message.info(`请使用发布计划初始化服务 ${row.service_name}`)
+    handleInitService(row) {
+      this.initTargetService = row
+      this.showInitModal = true
     },
 
     async handleDeleteService(row) {

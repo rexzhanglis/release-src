@@ -10,10 +10,18 @@ class Host(TimestampedModel):
     物理机/虚机，一台机器一条记录。
     一台机器上可部署多个 MdlServer 服务实例。
     """
+    INIT_STATUS_CHOICES = [
+        ('uninitialized', '未初始化'),
+        ('initializing',  '初始化中'),
+        ('ready',         '已初始化'),
+        ('failed',        '初始化失败'),
+    ]
     fqdn          = models.CharField("FQDN", max_length=100, unique=True)
     ip            = models.CharField("IP 地址", max_length=100)
     user          = models.CharField("SSH 用户", max_length=30, default="root")
     remote_python = models.CharField("远端 Python 路径", max_length=100, default="/usr/bin/python3")
+    init_status   = models.CharField("初始化状态", max_length=20,
+                                     choices=INIT_STATUS_CHOICES, default='uninitialized')
 
     def __str__(self):
         return f"{self.fqdn} ({self.ip})"

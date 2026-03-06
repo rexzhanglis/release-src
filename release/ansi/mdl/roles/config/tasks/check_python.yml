@@ -1,2 +1,2 @@
 - name: check python & requests
-  shell: "{{ remote_python | default('/usr/bin/python') }} -c 'import requests'"
+  shell: "{{ remote_python | default('/usr/bin/python3') }} -c 'import requests'"

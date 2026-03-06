@@ -22,6 +22,14 @@ export function deleteHost(id) {
   return request({ url: `/mdl-hosts/${id}/`, method: 'delete' })
 }
 
+export function initHost(id, data) {
+  return request({ url: `/mdl-hosts/${id}/init/`, method: 'post', data })
+}
+
+export function getHostInitStatus(id, taskId) {
+  return request({ url: `/mdl-hosts/${id}/init_status/`, method: 'get', params: { task_id: taskId } })
+}
+
 // ========== MdlServer（服务实例）==========
 
 export function getMdlServers(params) {

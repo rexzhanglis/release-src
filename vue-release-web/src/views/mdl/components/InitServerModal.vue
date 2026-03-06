@@ -60,7 +60,7 @@
         <el-form-item label-width="0" style="margin-bottom:8px">
           <el-checkbox v-model="initForm.is_egress">
             <span style="font-weight:600">是出口机器</span>
-            <span style="color:#909399;font-size:12px;margin-left:6px">勾选后可上传出口机器所需配置文件及 Anaconda 包</span>
+            <span style="color:#909399;font-size:12px;margin-left:6px">勾选后可上传出口机器所需配置文件</span>
           </el-checkbox>
         </el-form-item>
 
@@ -84,24 +84,6 @@
                 <span style="font-family:monospace">users_tcp.cfg</span>、
                 <span style="font-family:monospace">users_tcp.cfg.local</span><br>
                 上传后将复制到 <span style="font-family:monospace">{{ server && server.install_dir }}</span>
-              </div>
-            </el-upload>
-          </el-form-item>
-
-          <el-form-item label="Anaconda 包">
-            <el-upload
-              ref="anacondaUpload"
-              action="#"
-              :auto-upload="false"
-              :limit="1"
-              accept=".tar,.tar.gz,.tgz"
-              :on-change="handleAnacondaFileChange"
-              :on-remove="handleAnacondaFileRemove"
-              :file-list="anacondaFiles"
-            >
-              <el-button size="small" icon="el-icon-upload2">选择文件</el-button>
-              <div slot="tip" style="color:#909399;font-size:12px;margin-top:4px">
-                上传 anaconda.tar，将解压到 /opt 目录
               </div>
             </el-upload>
           </el-form-item>
@@ -226,7 +208,6 @@ const INIT_STEPS = [
   '配置DNS',
   '部署systemd服务',
   '配置出口机器',
-  '安装Anaconda',
 ]
 
 export default {
@@ -245,7 +226,6 @@ export default {
     return {
       initForm: { ssh_user: '', ssh_pass: '', is_egress: false },
       egressFiles: [],
-      anacondaFiles: [],
       starting: false,
       initStatus: '',   // '' | 'running' | 'success' | 'failed'
       deployLog: '',
@@ -269,7 +249,6 @@ export default {
       this.currentStep = ''
       this.initForm = { ssh_user: '', ssh_pass: '', is_egress: false }
       this.egressFiles = []
-      this.anacondaFiles = []
       // 初始化配置实例表单（根据服务器信息预填）
       const s = this.server
       if (s) {
@@ -296,12 +275,6 @@ export default {
     },
     handleEgressFileRemove(file, fileList) {
       this.egressFiles = fileList
-    },
-    handleAnacondaFileChange(file, fileList) {
-      this.anacondaFiles = fileList
-    },
-    handleAnacondaFileRemove(file, fileList) {
-      this.anacondaFiles = fileList
     },
     // 从日志中解析当前执行到哪个步骤，更新进度条
     updateProgress(log) {
@@ -344,9 +317,6 @@ export default {
 
         if (this.initForm.is_egress) {
           this.egressFiles.forEach(f => formData.append('egress_files', f.raw))
-          if (this.anacondaFiles.length > 0) {
-            formData.append('anaconda_file', this.anacondaFiles[0].raw)
-          }
         }
 
         const res = await initMdlServer(this.server.id, formData)

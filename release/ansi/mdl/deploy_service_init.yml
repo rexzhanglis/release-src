@@ -1,0 +1,8 @@
+- name: 初始化服务实例环境（实例级，每个服务实例执行一次）
+  hosts: 'all'
+  become: true
+  tasks:
+    - name: 初始化服务实例
+      include_role:
+        name: feeder
+        tasks_from: init_service

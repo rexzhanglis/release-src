@@ -1,0 +1,8 @@
+- name: 初始化服务器系统环境（系统级，每台机器执行一次）
+  hosts: 'all'
+  become: true
+  tasks:
+    - name: 初始化服务器
+      include_role:
+        name: feeder
+        tasks_from: init_host

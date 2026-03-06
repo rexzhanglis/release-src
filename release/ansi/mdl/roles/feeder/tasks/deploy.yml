@@ -2,10 +2,12 @@
   file: path={{ install_dir }} state=directory owner={{ user }} group={{ user }}
 
 - name: unarchive package
-  unarchive: src=/datayes/mdl/packages/{{ package_name }} dest={{ install_dir }} owner={{ user }} group={{ user }}
-
-# - name: unarchive package
-#   unarchive: remote_src=yes src=/tmp/{{ package_name }} dest={{ install_dir }} owner={{ user }} group={{ user }}
+  unarchive:
+    src: /datayes/mdl/packages/{{ package_name }}
+    dest: {{ install_dir }}
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    extra_opts: ['--strip-components=1']
 
 - name: move files
   command: mv {{ install_dir }}/mdl_release/ubuntu-14.04-gcc-4.8/{{ item }} {{ install_dir }}/

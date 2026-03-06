@@ -110,6 +110,9 @@
           <span v-if="isHostMode && activeServer" style="font-size:12px;color:#909399;font-weight:400;margin-left:8px">
             — {{ activeServer.service_name }}
           </span>
+          <span v-if="systemdRefreshedAt" style="font-size:11px;color:#c0c4cc;font-weight:400;margin-left:10px">
+            缓存更新: {{ systemdRefreshedAt }}
+          </span>
         </span>
         <div style="display:flex;gap:8px">
           <el-button size="small" type="primary" icon="el-icon-plus" @click="openCreateDialog">新增服务</el-button>
@@ -120,7 +123,8 @@
             :disabled="selectedServices.length === 0"
             @click="openBatchRestartDialog"
           >批量重启 {{ selectedServices.length > 0 ? '(' + selectedServices.length + ')' : '' }}</el-button>
-          <el-button size="small" icon="el-icon-refresh" :loading="loading" @click="fetchServices">刷新</el-button>
+          <el-button size="small" icon="el-icon-refresh" :loading="loading" @click="fetchServices">读缓存</el-button>
+          <el-button size="small" type="primary" plain icon="el-icon-refresh" :loading="refreshing" @click="handleRefreshNow">实时刷新</el-button>
         </div>
       </div>
 
@@ -384,6 +388,8 @@ export default {
 
       // systemd
       serviceList: [],
+      systemdRefreshedAt: '',
+      refreshing: false,
       loading: false,
       svcSearch: '',
       svcStateFilter: '',
@@ -567,11 +573,30 @@ export default {
       this.loading = true
       try {
         const res = await getSystemdServices(id)
-        this.serviceList = (res.data && res.data.services) || []
+        const d = res.data || {}
+        this.serviceList = d.services || []
+        this.systemdRefreshedAt = d.refreshed_at || ''
       } catch (e) {
         this.$message.error('获取 systemd 服务列表失败：' + (e.message || ''))
       } finally {
         this.loading = false
+      }
+    },
+
+    async handleRefreshNow() {
+      const id = this.activeServerIdForApi || (this.isHostMode ? null : this.routeId)
+      if (!id) return
+      this.refreshing = true
+      try {
+        const res = await getSystemdServices(id, { refresh: 1 })
+        const d = res.data || {}
+        this.serviceList = d.services || []
+        this.systemdRefreshedAt = d.refreshed_at || ''
+        this.$message.success('已从远端实时刷新')
+      } catch (e) {
+        this.$message.error('实时刷新失败：' + (e.message || ''))
+      } finally {
+        this.refreshing = false
       }
     },
 

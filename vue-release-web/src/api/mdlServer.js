@@ -78,8 +78,8 @@ export function deleteLabel(id) {
   return request({ url: `/mdl-labels/${id}/`, method: 'delete' })
 }
 
-export function getSystemdServices(id) {
-  return request({ url: `/mdl-servers/${id}/systemd_services/`, method: 'get' })
+export function getSystemdServices(id, params) {
+  return request({ url: `/mdl-servers/${id}/systemd_services/`, method: 'get', params })
 }
 
 export function controlSystemdService(id, data) {

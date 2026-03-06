@@ -549,94 +549,58 @@ class MdlServerViewSet(viewsets.ModelViewSet):
     def systemd_services(self, request, pk=None):
         """
         获取服务器上的 systemd service 列表及其状态。
-        通过 Ansible 在远端执行：systemctl list-units --type=service --all --plain --no-legend
-        返回：[{name, load_state, active_state, sub_state, description, enabled}, ...]
+        默认从 DB 缓存读取（由定时任务每5分钟刷新），加 ?refresh=1 触发实时查询并更新缓存。
+        返回：{services, ip, refreshed_at, from_cache}
         """
+        from mdl.models import SystemdServiceCache
+        from mdl.tasks import _fetch_systemd_for_host
+        from datetime import timezone as _tz
+
         server = self.get_object()
         if server.init_status not in ('ready',):
             return Response(
                 {'code': 400, 'message': '服务器尚未初始化完成，无法查询 systemd 服务'},
                 status=drf_status.HTTP_400_BAD_REQUEST
             )
-        try:
-            ssh_pass = ''
+
+        do_refresh = request.query_params.get('refresh', '') == '1'
+
+        if do_refresh:
             try:
-                ssh_pass = Constance.get_value('ansible_ssh_pass') or ''
-            except Exception:
-                pass
-            if not ssh_pass:
-                ssh_pass = os.environ.get('ANSIBLE_SSH_PASS', '')
-            ssh_user = os.environ.get('ANSIBLE_SSH_USER', '') or server.host.user or 'root'
-
-            import subprocess as _sp
-            import tempfile as _tf
-            tmpdir = _tf.mkdtemp(prefix='mdl_systemd_')
-            hosts_path = os.path.join(tmpdir, 'hosts')
-            with open(hosts_path, 'w') as f:
-                f.write(f"release ansible_ssh_host={server.host.ip} "
-                        f"ansible_ssh_user={ssh_user} "
-                        f"ansible_ssh_pass={ssh_pass}\n")
-
-            env = os.environ.copy()
-            env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
-
-            def _extract_cmd_output(output):
-                """从 Ansible shell 输出中提取实际命令内容（>> 之后的部分）"""
-                # Ansible 头部格式: "hostname | CHANGED | rc=0 >>"
-                # 找最后一个 ">>" 后的换行
-                idx = output.find('>>')
-                if idx != -1:
-                    rest = output[idx + 2:]
-                    # 跳过紧跟的空白/换行
-                    return rest.lstrip('\r\n ')
-                return output
-
-            # 只查 mdl- 开头的服务，避免处理大量无关服务
-            cmd = 'systemctl list-units "mdl-*.service" --all --plain --no-legend 2>/dev/null'
-            proc = _sp.run(
-                ['ansible', 'release', '-i', hosts_path, '-m', 'shell', '-a', cmd],
-                stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
-            )
-
-            services = []
-            raw = _extract_cmd_output(proc.stdout)
-            for line in raw.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                parts = line.split(None, 4)
-                if len(parts) >= 4 and parts[0].startswith('mdl-') and parts[0].endswith('.service'):
-                    services.append({
-                        'name': parts[0],
-                        'load_state': parts[1],
-                        'active_state': parts[2],
-                        'sub_state': parts[3],
-                        'description': parts[4] if len(parts) > 4 else '',
-                        'enabled': None,
-                    })
-
-            # is-enabled 查自启动状态
-            if services:
-                names = ' '.join(s['name'] for s in services)
-                proc2 = _sp.run(
-                    ['ansible', 'release', '-i', hosts_path, '-m', 'shell',
-                     '-a', f'systemctl is-enabled {names} 2>/dev/null || true'],
-                    stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
+                ssh_pass = Constance.get_value('ansible_ssh_pass') or os.environ.get('ANSIBLE_SSH_PASS', '')
+                ssh_user = Constance.get_value('ansible_ssh_user') or os.environ.get('ANSIBLE_SSH_USER', '') or server.host.user or 'root'
+                ansible_env = os.environ.copy()
+                ansible_env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
+                _, services, error = _fetch_systemd_for_host(server.host, ssh_user, ssh_pass, ansible_env)
+                from datetime import datetime
+                now = datetime.now(_tz.utc)
+                cache, _ = SystemdServiceCache.objects.update_or_create(
+                    host=server.host,
+                    defaults={'services': services, 'refreshed_at': now, 'error': error}
                 )
-                raw2 = _extract_cmd_output(proc2.stdout)
-                enabled_lines = [l.strip() for l in raw2.splitlines() if l.strip()]
-                for i, svc in enumerate(services):
-                    if i < len(enabled_lines):
-                        svc['enabled'] = enabled_lines[i]
+            except Exception as e:
+                return Response({'code': 500, 'message': str(e)}, status=drf_status.HTTP_500_INTERNAL_SERVER_ERROR)
+        else:
+            cache = SystemdServiceCache.objects.filter(host=server.host).first()
 
-            shutil.rmtree(tmpdir, ignore_errors=True)
-            return ApiResponse(data={'services': services, 'ip': server.host.ip})
+        if cache:
+            refreshed_at = cache.refreshed_at.astimezone(_tz.utc).strftime('%Y-%m-%d %H:%M:%S UTC') if cache.refreshed_at else None
+            return ApiResponse(data={
+                'services': cache.services,
+                'ip': server.host.ip,
+                'refreshed_at': refreshed_at,
+                'from_cache': not do_refresh,
+                'error': cache.error or '',
+            })
 
-        except Exception as e:
-            return Response(
-                {'code': 500, 'message': str(e)},
-                status=drf_status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        # 缓存不存在且未要求实时刷新，返回空并提示
+        return ApiResponse(data={
+            'services': [],
+            'ip': server.host.ip,
+            'refreshed_at': None,
+            'from_cache': False,
+            'error': '暂无缓存数据，请点击刷新',
+        })
 
     @action(detail=True, methods=['post'], url_path='systemd_control')
     def systemd_control(self, request, pk=None):

@@ -275,3 +275,7 @@ DATABASES = {
 #     # ('0 3 * * *', 'server.tasks.server_zabbix_sync_task'),
 #     # ('15 3 * * *', 'server.tasks.update_openstack_mapping_task'),
 # ]
+
+CRONJOBS = [
+    ('*/5 * * * *', 'mdl.tasks.refresh_systemd_cache'),
+]

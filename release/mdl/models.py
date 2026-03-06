@@ -195,6 +195,27 @@ class ConfigDeployTask(TimestampedModel):
         verbose_name_plural = "配置部署任务"
 
 
+class SystemdServiceCache(models.Model):
+    """
+    systemd 服务状态缓存，由定时任务每5分钟刷新一次。
+    每台 Host 一条记录，services 字段存 JSON 快照。
+    """
+    host = models.OneToOneField(
+        Host, verbose_name="物理机", on_delete=models.CASCADE,
+        related_name='systemd_cache'
+    )
+    services = models.JSONField("服务列表快照", default=list)
+    refreshed_at = models.DateTimeField("最后刷新时间", null=True, blank=True)
+    error = models.TextField("错误信息", blank=True, default='')
+
+    class Meta:
+        verbose_name = "systemd 缓存"
+        verbose_name_plural = "systemd 缓存"
+
+    def __str__(self):
+        return f"SystemdCache({self.host.fqdn})"
+
+
 class ConfigAuditLog(TimestampedModel):
     """MDL 配置操作审计日志
     记录所有对配置文件的写操作：编辑保存、批量修改、文本替换、提交Git、推送Consul、Ansible部署

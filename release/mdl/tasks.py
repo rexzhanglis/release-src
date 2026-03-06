@@ -143,6 +143,101 @@ def check_config_git_url_task():
         send_mail(str(check_abnormal_res))
 
 
+def _fetch_systemd_for_host(host, ssh_user, ssh_pass, ansible_env):
+    """对单台机器跑 ansible 查 systemd 状态，返回 (host_id, services, error)"""
+    import shutil, subprocess, tempfile
+    tmpdir = tempfile.mkdtemp(prefix='mdl_sysd_cache_')
+    try:
+        hosts_path = os.path.join(tmpdir, 'hosts')
+        with open(hosts_path, 'w') as f:
+            f.write(
+                f"release ansible_ssh_host={host.ip} "
+                f"ansible_ssh_user={ssh_user} "
+                f"ansible_ssh_pass={ssh_pass}\n"
+            )
+
+        def _extract(output):
+            idx = output.find('>>')
+            if idx != -1:
+                return output[idx + 2:].lstrip('\r\n ')
+            return output
+
+        cmd = 'systemctl list-units "mdl-*.service" --all --plain --no-legend 2>/dev/null'
+        proc = subprocess.run(
+            ['ansible', 'release', '-i', hosts_path, '-m', 'shell', '-a', cmd],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, env=ansible_env, timeout=30
+        )
+        services = []
+        for line in _extract(proc.stdout).splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(None, 4)
+            if len(parts) >= 4 and parts[0].startswith('mdl-') and parts[0].endswith('.service'):
+                services.append({
+                    'name': parts[0],
+                    'load_state': parts[1],
+                    'active_state': parts[2],
+                    'sub_state': parts[3],
+                    'description': parts[4] if len(parts) > 4 else '',
+                    'enabled': None,
+                })
+
+        if services:
+            names = ' '.join(s['name'] for s in services)
+            proc2 = subprocess.run(
+                ['ansible', 'release', '-i', hosts_path, '-m', 'shell',
+                 '-a', f'systemctl is-enabled {names} 2>/dev/null || true'],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, env=ansible_env, timeout=30
+            )
+            enabled_lines = [l.strip() for l in _extract(proc2.stdout).splitlines() if l.strip()]
+            for i, svc in enumerate(services):
+                if i < len(enabled_lines):
+                    svc['enabled'] = enabled_lines[i]
+
+        return host.id, services, ''
+    except Exception as e:
+        return host.id, [], str(e)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+@cron_log
+def refresh_systemd_cache():
+    """
+    并发刷新所有 ready 状态机器的 systemd 服务状态缓存（每台独立线程）。
+    django_crontab 配置（settings.py）：
+        CRONJOBS = [('*/5 * * * *', 'mdl.tasks.refresh_systemd_cache')]
+    """
+    import concurrent.futures
+    from datetime import datetime, timezone
+    from mdl.models import Host, SystemdServiceCache
+
+    ssh_pass = Constance.get_value('ansible_ssh_pass') or os.environ.get('ANSIBLE_SSH_PASS', '')
+    ssh_user = Constance.get_value('ansible_ssh_user') or os.environ.get('ANSIBLE_SSH_USER', 'root')
+    ansible_env = os.environ.copy()
+    ansible_env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
+
+    hosts = list(Host.objects.filter(init_status='ready'))
+    if not hosts:
+        return
+
+    now = datetime.now(timezone.utc)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {
+            executor.submit(_fetch_systemd_for_host, h, ssh_user, ssh_pass, ansible_env): h
+            for h in hosts
+        }
+        for future in concurrent.futures.as_completed(futures):
+            host_id, services, error = future.result()
+            SystemdServiceCache.objects.update_or_create(
+                host_id=host_id,
+                defaults={'services': services, 'refreshed_at': now, 'error': error}
+            )
+
+
 if __name__ == '__main__':
     # check_mdl_service_task()
     check_config_git_url_task()

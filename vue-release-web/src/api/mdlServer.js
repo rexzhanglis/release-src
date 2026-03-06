@@ -49,7 +49,7 @@ export function getMdlServer(id) {
 }
 
 export function updateMdlServer(id, data) {
-  return request({ url: `/mdl-servers/${id}/`, method: 'put', data })
+  return request({ url: `/mdl-servers/${id}/`, method: 'patch', data })
 }
 
 export function deleteMdlServer(id) {

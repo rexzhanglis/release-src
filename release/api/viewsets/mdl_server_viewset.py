@@ -282,7 +282,7 @@ class MdlServerSerializer(serializers.ModelSerializer):
     user = serializers.CharField(source='host.user', read_only=True)
     remote_python = serializers.CharField(source='host.remote_python', read_only=True)
     host_id = serializers.PrimaryKeyRelatedField(
-        queryset=Host.objects.all(), source='host', write_only=False, required=True
+        queryset=Host.objects.all(), source='host', write_only=False, required=False
     )
 
     class Meta:

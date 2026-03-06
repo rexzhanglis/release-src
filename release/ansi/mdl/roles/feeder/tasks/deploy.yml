@@ -3,8 +3,8 @@
 
 - name: unarchive package
   unarchive:
-    src: /datayes/mdl/packages/{{ package_name }}
-    dest: {{ install_dir }}
+    src: "/datayes/mdl/packages/{{ package_name }}"
+    dest: "{{ install_dir }}"
     owner: "{{ user }}"
     group: "{{ user }}"
     extra_opts: ['--strip-components=1']

@@ -21,11 +21,16 @@
       </el-descriptions>
     </el-card>
 
-    <!-- 服务实例列表（host 模式） -->
+    <!-- 服务实例列表（host 模式），支持展开行显示 systemd 服务 -->
     <el-card v-if="isHostMode" shadow="never" style="margin-bottom:16px">
       <div slot="header" style="display:flex;align-items:center;justify-content:space-between">
         <span style="font-weight:600">服务实例</span>
         <div style="display:flex;gap:8px">
+          <el-button
+            v-if="checkedServices.length > 0"
+            size="small" type="warning" icon="el-icon-setting"
+            @click="handleBatchInit"
+          >批量初始化（{{ checkedServices.length }}）</el-button>
           <el-button size="small" type="primary" icon="el-icon-plus" @click="handleAddService">新增服务实例</el-button>
           <el-button size="small" icon="el-icon-refresh" :loading="servicesLoading" @click="fetchMdlServices">刷新</el-button>
         </div>
@@ -35,12 +40,140 @@
         :data="mdlServices"
         border
         size="small"
-        highlight-current-row
-        :current-row-key="activeServerId"
         row-key="id"
-        @current-change="handleServiceSelect"
+        @selection-change="handleServiceCheckChange"
         style="width:100%"
       >
+        <el-table-column type="selection" width="40" />
+        <el-table-column type="expand">
+          <template slot-scope="{ row }">
+            <div style="padding:8px 16px">
+              <!-- systemd 工具栏 -->
+              <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">
+                <span style="font-size:12px;color:#606266;font-weight:600">systemd 服务</span>
+                <span v-if="cacheRefreshedAt(row.id)" style="font-size:11px;color:#c0c4cc;margin-left:4px">
+                  缓存: {{ cacheRefreshedAt(row.id) }}
+                </span>
+                <div style="margin-left:auto;display:flex;gap:6px">
+                  <el-input
+                    v-model="svcSearch[row.id]"
+                    placeholder="过滤服务名"
+                    clearable size="mini"
+                    prefix-icon="el-icon-search"
+                    style="width:180px"
+                    @input="$forceUpdate()"
+                  />
+                  <el-select
+                    v-model="svcStateFilter[row.id]"
+                    placeholder="状态" clearable size="mini" style="width:100px"
+                    @change="$forceUpdate()"
+                  >
+                    <el-option label="active" value="active" />
+                    <el-option label="inactive" value="inactive" />
+                    <el-option label="failed" value="failed" />
+                  </el-select>
+                  <el-button size="mini" type="primary" icon="el-icon-plus" @click="openCreateDialog(row.id)">新增</el-button>
+                  <el-button
+                    size="mini" type="warning" icon="el-icon-refresh"
+                    :disabled="!expandSelectedServices[row.id] || !expandSelectedServices[row.id].length"
+                    @click="openBatchRestartDialog(row.id)"
+                  >批量重启{{ expandSelectedServices[row.id] && expandSelectedServices[row.id].length ? '(' + expandSelectedServices[row.id].length + ')' : '' }}</el-button>
+                  <el-button size="mini" icon="el-icon-refresh" :loading="cacheLoading(row.id)" @click="fetchServicesForId(row.id)">读缓存</el-button>
+                  <el-button size="mini" type="primary" plain icon="el-icon-refresh" :loading="refreshingId === row.id" @click="handleRefreshNow(row.id)">实时刷新</el-button>
+                </div>
+              </div>
+
+              <!-- systemd 列表 -->
+              <el-table
+                v-loading="cacheLoading(row.id)"
+                :data="filteredServicesForId(row.id)"
+                border size="mini"
+                max-height="400"
+                @selection-change="(sel) => handleExpandSelectionChange(row.id, sel)"
+              >
+                <el-table-column type="selection" width="40" />
+                <el-table-column prop="name" label="服务名" min-width="200" show-overflow-tooltip>
+                  <template slot-scope="{ row: svc }">
+                    <span class="mono" style="font-size:12px">{{ svc.name }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="运行状态" width="90" align="center">
+                  <template slot-scope="{ row: svc }">
+                    <el-tag
+                      :type="svc.active_state === 'active' ? 'success' : svc.active_state === 'failed' ? 'danger' : 'info'"
+                      size="mini"
+                    >{{ svc.active_state }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="子状态" width="80" align="center">
+                  <template slot-scope="{ row: svc }">
+                    <span style="font-size:11px;color:#909399">{{ svc.sub_state }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="自启动" width="80" align="center">
+                  <template slot-scope="{ row: svc }">
+                    <el-tag
+                      v-if="svc.enabled !== null"
+                      :type="svc.enabled === 'enabled' ? 'success' : 'info'"
+                      size="mini"
+                    >{{ svc.enabled === 'enabled' ? '已启用' : svc.enabled || '-' }}</el-tag>
+                    <span v-else style="color:#c0c4cc;font-size:11px">-</span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="description" label="描述" min-width="160" show-overflow-tooltip>
+                  <template slot-scope="{ row: svc }">
+                    <span style="font-size:11px;color:#606266">{{ svc.description }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="310" align="center" fixed="right">
+                  <template slot-scope="{ row: svc }">
+                    <el-button
+                      v-if="svc.active_state !== 'active'"
+                      size="mini" type="text" style="color:#67c23a"
+                      @click="handleControl(row.id, svc, 'start')"
+                    >启动</el-button>
+                    <el-button
+                      v-else
+                      size="mini" type="text" style="color:#e6a23c"
+                      @click="handleControl(row.id, svc, 'stop')"
+                    >停止</el-button>
+                    <el-button
+                      v-if="svc.active_state === 'active'"
+                      size="mini" type="text"
+                      @click="openRestartDialog(row.id, svc)"
+                    >重启</el-button>
+                    <el-divider direction="vertical" />
+                    <el-button
+                      v-if="svc.enabled !== 'enabled'"
+                      size="mini" type="text" style="color:#409eff"
+                      @click="handleControl(row.id, svc, 'enable')"
+                    >自启</el-button>
+                    <el-button
+                      v-else
+                      size="mini" type="text" style="color:#f56c6c"
+                      @click="handleControl(row.id, svc, 'disable')"
+                    >禁用</el-button>
+                    <el-divider direction="vertical" />
+                    <el-button size="mini" type="text" @click="openEditDialog(row.id, svc)">编辑</el-button>
+                    <el-button size="mini" type="text" @click="openRenameDialog(row.id, svc)">重命名</el-button>
+                    <el-button size="mini" type="text" style="color:#f56c6c" @click="handleDelete(row.id, svc)">删除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+
+              <div v-if="!cacheLoading(row.id) && cacheServices(row.id).length === 0 && row.init_status === 'ready'"
+                style="text-align:center;padding:20px 0;color:#909399;font-size:12px">
+                <i class="el-icon-tickets" style="font-size:28px;color:#dcdfe6;display:block;margin-bottom:6px"></i>
+                未查询到 systemd 服务
+              </div>
+              <div v-else-if="row.init_status !== 'ready'"
+                style="text-align:center;padding:20px 0;color:#909399;font-size:12px">
+                服务实例尚未初始化完成
+              </div>
+            </div>
+          </template>
+        </el-table-column>
+
         <el-table-column prop="service_name" label="服务名" min-width="160" show-overflow-tooltip />
         <el-table-column prop="role_name" label="角色" width="120" />
         <el-table-column prop="install_dir" label="安装目录" min-width="180" show-overflow-tooltip>
@@ -55,13 +188,27 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" align="center" fixed="right">
+        <!-- systemd 摘要列 -->
+        <el-table-column label="systemd" width="120" align="center">
           <template slot-scope="{ row }">
-            <el-button size="mini" type="text" @click.stop="handleServiceSelect(row)">
-              <span :style="activeServerId === row.id ? 'color:#67c23a;font-weight:600' : ''">
-                {{ activeServerId === row.id ? '✓ 已选中' : '选中' }}
+            <template v-if="row.init_status === 'ready'">
+              <i v-if="cacheLoading(row.id)" class="el-icon-loading" style="color:#409eff" />
+              <span v-else-if="cacheServices(row.id).length">
+                <el-tag type="success" size="mini" effect="plain" style="margin-right:2px">
+                  ✓{{ cacheServices(row.id).filter(s => s.active_state === 'active').length }}
+                </el-tag>
+                <el-tag
+                  v-if="cacheServices(row.id).filter(s => s.active_state === 'failed').length"
+                  type="danger" size="mini" effect="plain"
+                >✗{{ cacheServices(row.id).filter(s => s.active_state === 'failed').length }}</el-tag>
               </span>
-            </el-button>
+              <span v-else style="color:#c0c4cc;font-size:11px">-</span>
+            </template>
+            <span v-else style="color:#c0c4cc;font-size:11px">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="160" align="center" fixed="right">
+          <template slot-scope="{ row }">
             <el-button size="mini" type="text" icon="el-icon-edit" @click.stop="handleEditService(row)">编辑</el-button>
             <el-button
               v-if="row.init_status !== 'ready'"
@@ -102,71 +249,51 @@
       </el-descriptions>
     </el-card>
 
-    <!-- systemd 服务 -->
-    <el-card shadow="never">
+    <!-- server 模式（旧路由）：单独的 systemd 卡片 -->
+    <el-card v-if="!isHostMode" shadow="never">
       <div slot="header" style="display:flex;align-items:center;justify-content:space-between">
         <span style="font-weight:600">
           systemd 服务
-          <span v-if="isHostMode && activeServer" style="font-size:12px;color:#909399;font-weight:400;margin-left:8px">
-            — {{ activeServer.service_name }}
-          </span>
-          <span v-if="systemdRefreshedAt" style="font-size:11px;color:#c0c4cc;font-weight:400;margin-left:10px">
-            缓存更新: {{ systemdRefreshedAt }}
+          <span v-if="serverModeRefreshedAt" style="font-size:11px;color:#c0c4cc;font-weight:400;margin-left:10px">
+            缓存更新: {{ serverModeRefreshedAt }}
           </span>
         </span>
         <div style="display:flex;gap:8px">
-          <el-button size="small" type="primary" icon="el-icon-plus" @click="openCreateDialog">新增服务</el-button>
+          <el-button size="small" type="primary" icon="el-icon-plus" @click="openCreateDialog(routeId)">新增服务</el-button>
           <el-button
-            size="small"
-            type="warning"
-            icon="el-icon-refresh"
+            size="small" type="warning" icon="el-icon-refresh"
             :disabled="selectedServices.length === 0"
-            @click="openBatchRestartDialog"
+            @click="openBatchRestartDialog(routeId)"
           >批量重启 {{ selectedServices.length > 0 ? '(' + selectedServices.length + ')' : '' }}</el-button>
-          <el-button size="small" icon="el-icon-refresh" :loading="loading" @click="fetchServices">读缓存</el-button>
-          <el-button size="small" type="primary" plain icon="el-icon-refresh" :loading="refreshing" @click="handleRefreshNow">实时刷新</el-button>
+          <el-button size="small" icon="el-icon-refresh" :loading="cacheLoading(routeId)" @click="fetchServicesForId(routeId)">读缓存</el-button>
+          <el-button size="small" type="primary" plain icon="el-icon-refresh" :loading="refreshingId === routeId" @click="handleRefreshNow(routeId)">实时刷新</el-button>
         </div>
       </div>
-
-      <!-- host 模式下未选中服务实例时的提示 -->
-      <div v-if="isHostMode && !activeServer" style="text-align:center;padding:40px 0;color:#909399">
-        <i class="el-icon-arrow-up" style="font-size:24px"></i>
-        <p style="margin-top:8px;font-size:13px">请在上方「服务实例」表格中选择一个服务实例，查看其 systemd 服务状态</p>
-      </div>
-
-      <div v-else-if="!activeServer && !server" style="text-align:center;padding:40px 0;color:#909399">
+      <div v-if="!server" style="text-align:center;padding:40px 0;color:#909399">
         <i class="el-icon-loading" style="font-size:24px"></i>
         <p style="margin-top:8px">加载中...</p>
       </div>
-
       <template v-else>
-        <!-- 搜索 -->
         <div style="margin-bottom:12px;display:flex;gap:8px;align-items:center">
           <el-input
-            v-model="svcSearch"
-            placeholder="过滤服务名"
-            clearable
-            size="small"
-            prefix-icon="el-icon-search"
-            style="width:220px"
+            v-model="serverModeSvcSearch"
+            placeholder="过滤服务名" clearable size="small"
+            prefix-icon="el-icon-search" style="width:220px"
           />
-          <el-select v-model="svcStateFilter" placeholder="运行状态" clearable size="small" style="width:120px">
+          <el-select v-model="serverModeSvcStateFilter" placeholder="运行状态" clearable size="small" style="width:120px">
             <el-option label="active" value="active" />
             <el-option label="inactive" value="inactive" />
             <el-option label="failed" value="failed" />
           </el-select>
           <span style="font-size:12px;color:#909399;margin-left:auto">
-            共 {{ filteredServices.length }} / {{ serviceList.length }} 个服务
+            共 {{ serverModeFilteredServices.length }} / {{ cacheServices(routeId).length }} 个服务
           </span>
         </div>
-
         <el-table
-          v-loading="loading"
-          :data="filteredServices"
-          border
-          size="small"
-          max-height="560"
-          @selection-change="handleSelectionChange"
+          v-loading="cacheLoading(routeId)"
+          :data="serverModeFilteredServices"
+          border size="small" max-height="560"
+          @selection-change="(sel) => selectedServices = sel"
         >
           <el-table-column type="selection" width="40" />
           <el-table-column prop="name" label="服务名" min-width="220" show-overflow-tooltip>
@@ -204,41 +331,20 @@
           </el-table-column>
           <el-table-column label="操作" width="320" align="center" fixed="right">
             <template slot-scope="{ row }">
-              <el-button
-                v-if="row.active_state !== 'active'"
-                size="mini" type="text" style="color:#67c23a"
-                @click="handleControl(row, 'start')"
-              >启动</el-button>
-              <el-button
-                v-else
-                size="mini" type="text" style="color:#e6a23c"
-                @click="handleControl(row, 'stop')"
-              >停止</el-button>
-              <el-button
-                v-if="row.active_state === 'active'"
-                size="mini" type="text"
-                @click="openRestartDialog(row)"
-              >重启</el-button>
+              <el-button v-if="row.active_state !== 'active'" size="mini" type="text" style="color:#67c23a" @click="handleControl(routeId, row, 'start')">启动</el-button>
+              <el-button v-else size="mini" type="text" style="color:#e6a23c" @click="handleControl(routeId, row, 'stop')">停止</el-button>
+              <el-button v-if="row.active_state === 'active'" size="mini" type="text" @click="openRestartDialog(routeId, row)">重启</el-button>
               <el-divider direction="vertical" />
-              <el-button
-                v-if="row.enabled !== 'enabled'"
-                size="mini" type="text" style="color:#409eff"
-                @click="handleControl(row, 'enable')"
-              >自启</el-button>
-              <el-button
-                v-else
-                size="mini" type="text" style="color:#f56c6c"
-                @click="handleControl(row, 'disable')"
-              >禁用</el-button>
+              <el-button v-if="row.enabled !== 'enabled'" size="mini" type="text" style="color:#409eff" @click="handleControl(routeId, row, 'enable')">自启</el-button>
+              <el-button v-else size="mini" type="text" style="color:#f56c6c" @click="handleControl(routeId, row, 'disable')">禁用</el-button>
               <el-divider direction="vertical" />
-              <el-button size="mini" type="text" @click="openEditDialog(row)">编辑</el-button>
-              <el-button size="mini" type="text" @click="openRenameDialog(row)">重命名</el-button>
-              <el-button size="mini" type="text" style="color:#f56c6c" @click="handleDelete(row)">删除</el-button>
+              <el-button size="mini" type="text" @click="openEditDialog(routeId, row)">编辑</el-button>
+              <el-button size="mini" type="text" @click="openRenameDialog(routeId, row)">重命名</el-button>
+              <el-button size="mini" type="text" style="color:#f56c6c" @click="handleDelete(routeId, row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
-
-        <div v-if="!loading && serviceList.length === 0" style="text-align:center;padding:40px 0;color:#909399">
+        <div v-if="!cacheLoading(routeId) && cacheServices(routeId).length === 0" style="text-align:center;padding:40px 0;color:#909399">
           <i class="el-icon-tickets" style="font-size:40px;color:#dcdfe6"></i>
           <p style="margin-top:8px;font-size:13px">未查询到 systemd 服务</p>
         </div>
@@ -297,7 +403,7 @@
       </span>
     </el-dialog>
 
-    <!-- 单服务重启弹窗（含 consul_pull 选项）-->
+    <!-- 单服务重启弹窗 -->
     <el-dialog title="重启服务" :visible.sync="restartDialog.visible" width="440px" :close-on-click-modal="false">
       <div style="margin-bottom:16px;font-size:13px">
         确认重启 <strong>{{ restartDialog.services.join(', ') }}</strong>？
@@ -314,10 +420,10 @@
     <!-- 批量重启弹窗 -->
     <el-dialog title="批量重启服务" :visible.sync="batchRestartDialog.visible" width="480px" :close-on-click-modal="false">
       <div style="margin-bottom:12px;font-size:13px">
-        即将重启以下 {{ selectedServices.length }} 个服务：
+        即将重启以下 {{ batchRestartServices.length }} 个服务：
       </div>
       <div style="background:#f5f7fa;padding:8px 12px;border-radius:4px;font-size:12px;font-family:monospace;max-height:120px;overflow:auto">
-        <div v-for="s in selectedServices" :key="s.name">{{ s.name }}</div>
+        <div v-for="s in batchRestartServices" :key="s.name">{{ s.name }}</div>
       </div>
       <div style="margin-top:16px">
         <el-checkbox v-model="batchRestartDialog.consulPull" style="font-size:13px">
@@ -384,7 +490,7 @@
       :host-id="routeId"
       :server="currentService"
       :existing-services="currentService ? [] : mdlServices"
-      @success="fetchMdlServices"
+      @success="handleServiceSaved"
     />
 
     <!-- 服务实例初始化弹窗 -->
@@ -423,19 +529,34 @@ export default {
       host: null,
       mdlServices: [],
       servicesLoading: false,
-      activeServerId: null,
       showServiceForm: false,
       currentService: null,
       showInitModal: false,
       initTargetService: null,
+      checkedServices: [],
 
       // server 模式（兼容旧路由）
       server: null,
 
-      // systemd
-      serviceList: [],
-      systemdRefreshedAt: '',
-      refreshing: false,
+      // systemd cache: { [serverId]: { services, refreshed_at, loading } }
+      systemdCache: {},
+      // 当前正在实时刷新的 serverId
+      refreshingId: null,
+
+      // 展开行内各实例的勾选状态 { [serverId]: [svc, ...] }
+      expandSelectedServices: {},
+      // 当前操作的 serverId（用于弹窗提交时）
+      currentServerId: null,
+
+      // server 模式搜索过滤
+      serverModeSvcSearch: '',
+      serverModeSvcStateFilter: '',
+      selectedServices: [],
+
+      // host 模式展开行内搜索（用对象存每个实例的值）
+      svcSearch: {},
+      svcStateFilter: {},
+
       // 操作日志
       logTab: 'service',
       logs: [],
@@ -443,10 +564,6 @@ export default {
       logsPage: 1,
       logsPageSize: 20,
       logsLoading: false,
-      loading: false,
-      svcSearch: '',
-      svcStateFilter: '',
-      selectedServices: [],
 
       editDialog: {
         visible: false,
@@ -484,16 +601,6 @@ export default {
     isHostMode() {
       return this.$route.query.type === 'host'
     },
-    // The MdlServer instance used for systemd actions
-    activeServer() {
-      if (this.isHostMode) {
-        return this.mdlServices.find(s => s.id === this.activeServerId) || null
-      }
-      return this.server
-    },
-    activeServerIdForApi() {
-      return this.activeServer ? this.activeServer.id : null
-    },
     pageTitle() {
       if (this.isHostMode) return this.host ? this.host.fqdn : '加载中...'
       return this.server ? this.server.fqdn : '加载中...'
@@ -506,18 +613,29 @@ export default {
       const map = { uninitialized: 'info', initializing: 'warning', ready: 'success', failed: 'danger', retired: '' }
       return map[this.server && this.server.init_status] || 'info'
     },
-    filteredServices() {
-      return this.serviceList.filter(s => {
-        const matchName = !this.svcSearch || s.name.includes(this.svcSearch)
-        const matchState = !this.svcStateFilter || s.active_state === this.svcStateFilter
+    // server 模式下 systemd 数据
+    serverModeRefreshedAt() {
+      return (this.systemdCache[this.routeId] && this.systemdCache[this.routeId].refreshed_at) || ''
+    },
+    serverModeFilteredServices() {
+      return this.cacheServices(this.routeId).filter(s => {
+        const matchName = !this.serverModeSvcSearch || s.name.includes(this.serverModeSvcSearch)
+        const matchState = !this.serverModeSvcStateFilter || s.active_state === this.serverModeSvcStateFilter
         return matchName && matchState
       })
+    },
+    // 批量重启弹窗使用的服务列表
+    batchRestartServices() {
+      if (!this.currentServerId) return []
+      if (this.isHostMode) {
+        return (this.expandSelectedServices[this.currentServerId] || [])
+      }
+      return this.selectedServices
     },
   },
   created() {
     if (this.isHostMode) {
       this.fetchHost()
-      this.fetchServices()
       this.fetchLogs()
     } else {
       this.fetchServer()
@@ -531,6 +649,30 @@ export default {
     initStatusType(status) {
       const map = { uninitialized: 'info', initializing: 'warning', ready: 'success', failed: 'danger', retired: '' }
       return map[status] || 'info'
+    },
+
+    // ---- cache helpers ----
+    cacheServices(id) {
+      return (this.systemdCache[id] && this.systemdCache[id].services) || []
+    },
+    cacheLoading(id) {
+      return !!(this.systemdCache[id] && this.systemdCache[id].loading)
+    },
+    cacheRefreshedAt(id) {
+      return (this.systemdCache[id] && this.systemdCache[id].refreshed_at) || ''
+    },
+    filteredServicesForId(id) {
+      const search = this.svcSearch[id] || ''
+      const stateFilter = this.svcStateFilter[id] || ''
+      return this.cacheServices(id).filter(s => {
+        const matchName = !search || s.name.includes(search)
+        const matchState = !stateFilter || s.active_state === stateFilter
+        return matchName && matchState
+      })
+    },
+    _setCache(id, patch) {
+      const cur = this.systemdCache[id] || { services: [], refreshed_at: '', loading: false }
+      this.$set(this.systemdCache, id, { ...cur, ...patch })
     },
 
     // ---- host 模式 ----
@@ -551,26 +693,34 @@ export default {
         const data = res.data
         this.mdlServices = Array.isArray(data) ? data
           : (data && Array.isArray(data.results)) ? data.results : []
-        // 自动选中第一个（若当前选中的已不存在则重置）
-        if (this.activeServerId && !this.mdlServices.find(s => s.id === this.activeServerId)) {
-          this.activeServerId = null
-          this.serviceList = []
-        }
-        if (!this.activeServerId && this.mdlServices.length > 0) {
-          this.handleServiceSelect(this.mdlServices[0])
-        }
       } catch {
         this.$message.error('加载服务实例列表失败')
       } finally {
         this.servicesLoading = false
       }
+      // 对所有 ready 实例并行实时刷新
+      this._refreshAllSystemd()
     },
 
-    handleServiceSelect(row) {
-      if (!row) return
-      this.activeServerId = row.id
-      this.serviceList = []
-      this.fetchServices()
+    _refreshAllSystemd() {
+      const readyServers = this.mdlServices.filter(s => s.init_status === 'ready')
+      readyServers.forEach(srv => {
+        this._setCache(srv.id, { loading: true })
+        getSystemdServices(srv.id, { refresh: 1 }).then(res => {
+          const d = res.data || {}
+          this._setCache(srv.id, { services: d.services || [], refreshed_at: d.refreshed_at || '', loading: false })
+        }).catch(() => {
+          this._setCache(srv.id, { loading: false })
+        })
+      })
+    },
+
+    handleServiceCheckChange(selection) {
+      this.checkedServices = selection
+    },
+
+    handleExpandSelectionChange(serverId, selection) {
+      this.$set(this.expandSelectedServices, serverId, selection)
     },
 
     handleAddService() {
@@ -583,8 +733,27 @@ export default {
       this.showServiceForm = true
     },
 
+    handleServiceSaved() {
+      const edited = this.currentService
+      this.fetchMdlServices()
+      if (edited && edited.init_status === 'ready') {
+        this.$confirm(
+          '服务实例配置已修改（如安装路径、consul 配置等），是否立即重新初始化以使更改生效？',
+          '提示',
+          { confirmButtonText: '重新初始化', cancelButtonText: '暂不', type: 'warning' }
+        ).then(() => {
+          this.handleInitService(edited)
+        }).catch(() => {})
+      }
+    },
+
     handleInitService(row) {
-      this.initTargetService = row
+      this.initTargetService = [row]
+      this.showInitModal = true
+    },
+    handleBatchInit() {
+      if (!this.checkedServices.length) return
+      this.initTargetService = this.checkedServices.slice()
       this.showInitModal = true
     },
 
@@ -599,10 +768,6 @@ export default {
       try {
         await deleteMdlServer(row.id)
         this.$message.success('删除成功')
-        if (this.activeServerId === row.id) {
-          this.activeServerId = null
-          this.serviceList = []
-        }
         await this.fetchMdlServices()
       } catch (e) {
         const msg = (e.response && e.response.data && e.response.data.message) || e.message || '删除失败'
@@ -615,53 +780,37 @@ export default {
       try {
         const res = await getMdlServer(this.routeId)
         this.server = res.data
-        this.fetchServices()
+        this.fetchServicesForId(this.routeId)
       } catch {
         this.$message.error('加载服务器信息失败')
       }
     },
 
     // ---- systemd ----
-    async fetchServices() {
-      const id = this.activeServerIdForApi || (this.isHostMode ? null : this.routeId)
-      if (!id) return
-      this.loading = true
+    async fetchServicesForId(id) {
+      this._setCache(id, { loading: true })
       try {
         const res = await getSystemdServices(id)
         const d = res.data || {}
-        this.serviceList = d.services || []
-        this.systemdRefreshedAt = d.refreshed_at || ''
-        // 缓存为空时自动触发实时刷新
-        if (!this.serviceList.length && !this.systemdRefreshedAt) {
-          this.loading = false
-          await this.handleRefreshNow()
-        }
+        this._setCache(id, { services: d.services || [], refreshed_at: d.refreshed_at || '', loading: false })
       } catch (e) {
+        this._setCache(id, { loading: false })
         this.$message.error('获取 systemd 服务列表失败：' + (e.message || ''))
-      } finally {
-        this.loading = false
       }
     },
 
-    async handleRefreshNow() {
-      const id = this.activeServerIdForApi || (this.isHostMode ? null : this.routeId)
-      if (!id) return
-      this.refreshing = true
+    async handleRefreshNow(id) {
+      this.refreshingId = id
       try {
         const res = await getSystemdServices(id, { refresh: 1 })
         const d = res.data || {}
-        this.serviceList = d.services || []
-        this.systemdRefreshedAt = d.refreshed_at || ''
+        this._setCache(id, { services: d.services || [], refreshed_at: d.refreshed_at || '', loading: false })
         this.$message.success('已从远端实时刷新')
       } catch (e) {
         this.$message.error('实时刷新失败：' + (e.message || ''))
       } finally {
-        this.refreshing = false
+        this.refreshingId = null
       }
-    },
-
-    handleSelectionChange(rows) {
-      this.selectedServices = rows
     },
 
     // ---- 操作日志 ----
@@ -707,8 +856,7 @@ export default {
       return map[action] || action
     },
 
-    async handleControl(svc, action) {
-      const id = this.activeServerIdForApi || this.routeId
+    async handleControl(serverId, svc, action) {
       try {
         await this.$confirm(
           '确认对「' + svc.name + '」执行 ' + action + '？',
@@ -717,10 +865,10 @@ export default {
         )
       } catch { return }
       try {
-        const res = await controlSystemdService(id, { service: svc.name, action })
+        const res = await controlSystemdService(serverId, { service: svc.name, action })
         if (res.data && res.data.ok) {
           this.$message.success(action + ' 成功')
-          await this.fetchServices()
+          await this.fetchServicesForId(serverId)
           this.fetchLogs()
         } else {
           this.$message.error(action + ' 失败：' + ((res.data && res.data.output) || ''))
@@ -731,7 +879,8 @@ export default {
       }
     },
 
-    openRestartDialog(svc) {
+    openRestartDialog(serverId, svc) {
+      this.currentServerId = serverId
       this.restartDialog.services = [svc.name]
       this.restartDialog.consulPull = false
       this.restartDialog.loading = false
@@ -739,7 +888,7 @@ export default {
     },
 
     async submitRestart() {
-      const id = this.activeServerIdForApi || this.routeId
+      const id = this.currentServerId
       this.restartDialog.loading = true
       try {
         const res = await controlSystemdService(id, {
@@ -750,7 +899,7 @@ export default {
         if (res.data && res.data.ok) {
           this.$message.success('重启成功')
           this.restartDialog.visible = false
-          await this.fetchServices()
+          await this.fetchServicesForId(id)
         } else {
           this.$message.error('重启失败：' + ((res.data && res.data.output) || ''))
         }
@@ -761,25 +910,26 @@ export default {
       }
     },
 
-    openBatchRestartDialog() {
+    openBatchRestartDialog(serverId) {
+      this.currentServerId = serverId
       this.batchRestartDialog.consulPull = false
       this.batchRestartDialog.loading = false
       this.batchRestartDialog.visible = true
     },
 
     async submitBatchRestart() {
-      const id = this.activeServerIdForApi || this.routeId
+      const id = this.currentServerId
       this.batchRestartDialog.loading = true
       try {
         const res = await controlSystemdService(id, {
-          services: this.selectedServices.map(s => s.name),
+          services: this.batchRestartServices.map(s => s.name),
           action: 'restart',
           consul_pull: this.batchRestartDialog.consulPull,
         })
         if (res.data && res.data.ok) {
           this.$message.success('批量重启成功')
           this.batchRestartDialog.visible = false
-          await this.fetchServices()
+          await this.fetchServicesForId(id)
         } else {
           this.$message.error('批量重启失败：' + ((res.data && res.data.output) || ''))
         }
@@ -790,7 +940,8 @@ export default {
       }
     },
 
-    openCreateDialog() {
+    openCreateDialog(serverId) {
+      this.currentServerId = serverId
       this.editDialog.op = 'create'
       this.editDialog.name = ''
       this.editDialog.content = DEFAULT_SERVICE_CONTENT
@@ -798,15 +949,15 @@ export default {
       this.editDialog.visible = true
     },
 
-    async openEditDialog(svc) {
-      const id = this.activeServerIdForApi || this.routeId
+    async openEditDialog(serverId, svc) {
+      this.currentServerId = serverId
       this.editDialog.op = 'update'
       this.editDialog.name = svc.name
       this.editDialog.content = ''
       this.editDialog.loading = false
       this.editDialog.visible = true
       try {
-        const res = await getSystemdServiceFile(id, svc.name)
+        const res = await getSystemdServiceFile(serverId, svc.name)
         this.editDialog.content = (res.data && res.data.content) || ''
       } catch {
         this.$message.warning('读取 service 文件失败，可手动输入内容')
@@ -814,7 +965,7 @@ export default {
     },
 
     async submitEditDialog() {
-      const id = this.activeServerIdForApi || this.routeId
+      const id = this.currentServerId
       const { op, name, content } = this.editDialog
       if (!name || !name.endsWith('.service')) {
         return this.$message.warning('服务名必须以 .service 结尾')
@@ -828,7 +979,7 @@ export default {
         if (res.data && res.data.ok) {
           this.$message.success(op === 'create' ? '创建成功' : '保存成功')
           this.editDialog.visible = false
-          await this.fetchServices()
+          await this.fetchServicesForId(id)
         } else {
           this.$message.error((op === 'create' ? '创建' : '保存') + '失败：' + ((res.data && res.data.output) || ''))
         }
@@ -839,8 +990,7 @@ export default {
       }
     },
 
-    async handleDelete(svc) {
-      const id = this.activeServerIdForApi || this.routeId
+    async handleDelete(serverId, svc) {
       try {
         await this.$confirm(
           '确认删除「' + svc.name + '」的 service 文件？此操作不可恢复。',
@@ -849,10 +999,10 @@ export default {
         )
       } catch { return }
       try {
-        const res = await manageSystemdService(id, { op: 'delete', name: svc.name })
+        const res = await manageSystemdService(serverId, { op: 'delete', name: svc.name })
         if (res.data && res.data.ok) {
           this.$message.success('删除成功')
-          await this.fetchServices()
+          await this.fetchServicesForId(serverId)
         } else {
           this.$message.error('删除失败：' + ((res.data && res.data.output) || ''))
         }
@@ -861,7 +1011,8 @@ export default {
       }
     },
 
-    openRenameDialog(svc) {
+    openRenameDialog(serverId, svc) {
+      this.currentServerId = serverId
       this.renameDialog.name = svc.name
       this.renameDialog.newName = ''
       this.renameDialog.loading = false
@@ -869,7 +1020,7 @@ export default {
     },
 
     async submitRename() {
-      const id = this.activeServerIdForApi || this.routeId
+      const id = this.currentServerId
       const { name, newName } = this.renameDialog
       if (!newName || !newName.endsWith('.service')) {
         return this.$message.warning('新服务名必须以 .service 结尾')
@@ -880,7 +1031,7 @@ export default {
         if (res.data && res.data.ok) {
           this.$message.success('重命名成功')
           this.renameDialog.visible = false
-          await this.fetchServices()
+          await this.fetchServicesForId(id)
         } else {
           this.$message.error('重命名失败：' + ((res.data && res.data.output) || ''))
         }
@@ -895,11 +1046,11 @@ export default {
 </script>
 
 <style scoped>
-.server-detail {
-  padding: 16px;
-}
 .mono {
   font-family: monospace;
   font-size: 12px;
+}
+.empty-placeholder {
+  text-align: center;
 }
 </style>

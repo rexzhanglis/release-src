@@ -14,25 +14,38 @@
         <span style="color:#909399;font-size:12px">初始化完成后，请通过 Jira 发布流程进行首次版本部署。</span>
       </el-alert>
 
-      <!-- 服务器信息展示 -->
-      <el-descriptions v-if="server" :column="2" size="small" border style="margin-bottom:16px">
+      <!-- 批量模式：显示实例列表 -->
+      <template v-if="isBatch">
+        <div style="margin-bottom:12px;font-size:13px;color:#303133;font-weight:600">
+          待初始化服务实例（共 {{ serverList.length }} 个，将依次串行执行）：
+        </div>
+        <el-table :data="serverList" size="mini" border style="margin-bottom:16px">
+          <el-table-column prop="service_name" label="服务名" />
+          <el-table-column prop="install_dir" label="安装目录" show-overflow-tooltip>
+            <template slot-scope="{ row }"><span class="mono">{{ row.install_dir }}</span></template>
+          </el-table-column>
+        </el-table>
+      </template>
+
+      <!-- 单个模式：服务器信息展示 -->
+      <el-descriptions v-else-if="singleServer" :column="2" size="small" border style="margin-bottom:16px">
         <el-descriptions-item label="FQDN">
-          <span class="mono">{{ server.fqdn }}</span>
+          <span class="mono">{{ singleServer.fqdn }}</span>
         </el-descriptions-item>
         <el-descriptions-item label="IP 地址">
-          <span class="mono">{{ server.ip }}</span>
+          <span class="mono">{{ singleServer.ip }}</span>
         </el-descriptions-item>
         <el-descriptions-item label="服务名">
-          <span class="mono">{{ server.service_name }}</span>
+          <span class="mono">{{ singleServer.service_name }}</span>
         </el-descriptions-item>
         <el-descriptions-item label="安装目录">
-          <span class="mono">{{ server.install_dir }}</span>
+          <span class="mono">{{ singleServer.install_dir }}</span>
         </el-descriptions-item>
         <el-descriptions-item label="备份目录">
-          <span class="mono">{{ server.backups_dir }}</span>
+          <span class="mono">{{ singleServer.backups_dir }}</span>
         </el-descriptions-item>
         <el-descriptions-item label="远端 Python">
-          <span class="mono">{{ server.remote_python }}</span>
+          <span class="mono">{{ singleServer.remote_python }}</span>
         </el-descriptions-item>
       </el-descriptions>
 
@@ -100,15 +113,36 @@
       <div v-else-if="initStatus === 'success'" class="status-row success">
         <i class="el-icon-circle-check" style="font-size:32px"></i>
         <div style="margin-left:12px">
-          <div>系统环境初始化完成</div>
+          <div>{{ isBatch ? `批量初始化完成（共 ${batchItems.length} 个）` : '系统环境初始化完成' }}</div>
           <div style="font-size:12px;color:#67c23a;margin-top:4px">
             请前往 Jira 创建发布工单，通过发布流程进行首次版本部署
           </div>
         </div>
       </div>
 
-      <!-- 初始化成功后：配置实例创建引导 -->
-      <template v-if="initStatus === 'success'">
+      <!-- 批量模式：实例列表状态 -->
+      <template v-if="isBatch && batchItems.length">
+        <el-table :data="batchItems" size="mini" border style="margin:10px 0 8px">
+          <el-table-column label="服务名" prop="server.service_name" />
+          <el-table-column label="状态" width="100" align="center">
+            <template slot-scope="{ row }">
+              <span v-if="row.status === 'running'" style="color:#409eff">
+                <i class="el-icon-loading" /> 初始化中
+              </span>
+              <span v-else-if="row.status === 'success'" style="color:#67c23a">
+                <i class="el-icon-circle-check" /> 成功
+              </span>
+              <span v-else-if="row.status === 'failed'" style="color:#f56c6c">
+                <i class="el-icon-circle-close" /> 失败
+              </span>
+              <span v-else style="color:#909399">等待中</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </template>
+
+      <!-- 单个模式成功后：配置实例创建引导 -->
+      <template v-if="!isBatch && initStatus === 'success'">
         <el-divider style="margin:14px 0 10px" />
         <div style="font-size:13px;font-weight:600;margin-bottom:10px;color:#303133">
           <i class="el-icon-folder-add" style="color:#409eff;margin-right:4px" />
@@ -154,7 +188,7 @@
       </template>
       <div v-else-if="initStatus === 'failed'" class="status-row fail">
         <i class="el-icon-circle-close" style="font-size:32px"></i>
-        <span style="margin-left:10px">初始化失败，请查看下方日志</span>
+        <span style="margin-left:10px">{{ isBatch ? '批量初始化部分失败，请查看各实例日志' : '初始化失败，请查看下方日志' }}</span>
       </div>
 
       <!-- 进度条 -->
@@ -214,12 +248,23 @@ export default {
   name: 'InitServerModal',
   props: {
     value: { type: Boolean, default: false },
-    server: { type: Object, default: null },
+    // 支持单个对象或数组（批量初始化）
+    server: { type: [Object, Array], default: null },
   },
   computed: {
     dialogVisible: {
       get() { return this.value },
       set(val) { this.$emit('input', val) },
+    },
+    serverList() {
+      if (!this.server) return []
+      return Array.isArray(this.server) ? this.server : [this.server]
+    },
+    isBatch() {
+      return this.serverList.length > 1
+    },
+    singleServer() {
+      return this.serverList[0] || null
     },
   },
   data() {
@@ -233,7 +278,10 @@ export default {
       pollTimer: null,
       initProgress: 0,
       currentStep: '',
-      // 配置实例创建
+      // 批量模式：每个实例状态
+      batchItems: [],  // [{ server, status: ''|'running'|'success'|'failed', log }]
+      batchCurrentIdx: -1,
+      // 配置实例创建（单个模式）
       cfgForm: { service_type_name: '', instance_name: '', commit_message: '' },
       cfgCreating: false,
       configCreated: '',
@@ -249,8 +297,10 @@ export default {
       this.currentStep = ''
       this.initForm = { ssh_user: '', ssh_pass: '', is_egress: false }
       this.egressFiles = []
-      // 初始化配置实例表单（根据服务器信息预填）
-      const s = this.server
+      this.batchItems = this.serverList.map(s => ({ server: s, status: '', log: '' }))
+      this.batchCurrentIdx = -1
+      // 单个模式：预填配置实例表单
+      const s = this.singleServer
       if (s) {
         this.cfgForm = {
           service_type_name: s.role_name || '',
@@ -303,67 +353,136 @@ export default {
       }
     },
     async handleStart() {
+      if (this.isBatch) {
+        await this._runBatch()
+      } else {
+        await this._runSingle(this.singleServer)
+      }
+    },
+    // 单个初始化核心逻辑，返回最终 status
+    async _runSingle(srv) {
       this.starting = true
       this.initStatus = 'running'
       this.deployLog = ''
       this.initProgress = 0
       this.currentStep = '准备初始化...'
 
-      try {
+      return new Promise((resolve) => {
         const formData = new FormData()
         if (this.initForm.ssh_user) formData.append('ssh_user', this.initForm.ssh_user)
         if (this.initForm.ssh_pass) formData.append('ssh_pass', this.initForm.ssh_pass)
         formData.append('is_egress', this.initForm.is_egress ? '1' : '0')
-
         if (this.initForm.is_egress) {
           this.egressFiles.forEach(f => formData.append('egress_files', f.raw))
         }
 
-        const res = await initMdlServer(this.server.id, formData)
-        // request.js 拦截器已将 response.data 直接返回，res 即 {code,message,data}
-        const respData = res.data
-        if (!respData || !respData.task_id) {
-          const msg = (res && res.message) || '服务器返回数据异常，请查看后端日志'
-          throw new Error(msg)
-        }
-        this.taskId = respData.task_id
-
-        this.pollTimer = setInterval(async () => {
-          try {
-            const r = await getInitStatus(this.server.id, this.taskId)
-            const d = r.data
-            if (!d) return
-            this.deployLog = d.log || ''
-            this.updateProgress(this.deployLog)
-            this.$nextTick(() => {
-              if (this.$refs.logPre) {
-                this.$refs.logPre.scrollTop = this.$refs.logPre.scrollHeight
-              }
-            })
-            if (d.status === 'success' || d.status === 'failed') {
-              clearInterval(this.pollTimer)
-              this.pollTimer = null
-              this.initStatus = d.status
-              this.starting = false
-              if (d.status === 'success') {
-                this.initProgress = 100
-                this.currentStep = '初始化完成'
-                this.$message.success('系统环境初始化成功，请通过 Jira 发布流程部署版本')
-              } else {
-                this.$message.error('初始化失败，请查看日志')
-              }
-              this.$emit('done', d.status)
-            }
-          } catch (pollErr) {
-            console.error('轮询状态失败:', pollErr)
+        initMdlServer(srv.id, formData).then(res => {
+          const respData = res.data
+          if (!respData || !respData.task_id) {
+            throw new Error((res && res.message) || '服务器返回数据异常')
           }
-        }, 2000)
-      } catch (e) {
-        const msg = (e.response && e.response.data && e.response.data.message) || e.message || '启动失败'
-        this.$message.error(msg)
-        this.initStatus = 'failed'
-        this.starting = false
+          this.taskId = respData.task_id
+
+          this.pollTimer = setInterval(async () => {
+            try {
+              const r = await getInitStatus(srv.id, this.taskId)
+              const d = r.data
+              if (!d) return
+              this.deployLog = d.log || ''
+              this.updateProgress(this.deployLog)
+              this.$nextTick(() => {
+                if (this.$refs.logPre) this.$refs.logPre.scrollTop = this.$refs.logPre.scrollHeight
+              })
+              if (d.status === 'success' || d.status === 'failed') {
+                clearInterval(this.pollTimer)
+                this.pollTimer = null
+                this.initStatus = d.status
+                this.starting = false
+                if (d.status === 'success') {
+                  this.initProgress = 100
+                  this.currentStep = '初始化完成'
+                  this.$message.success('系统环境初始化成功，请通过 Jira 发布流程部署版本')
+                } else {
+                  this.$message.error('初始化失败，请查看日志')
+                }
+                this.$emit('done', d.status)
+                resolve(d.status)
+              }
+            } catch (pollErr) {
+              console.error('轮询状态失败:', pollErr)
+            }
+          }, 2000)
+        }).catch(e => {
+          const msg = (e.response && e.response.data && e.response.data.message) || e.message || '启动失败'
+          this.$message.error(msg)
+          this.initStatus = 'failed'
+          this.starting = false
+          resolve('failed')
+        })
+      })
+    },
+    // 批量初始化：依次串行执行每个实例
+    async _runBatch() {
+      this.starting = true
+      this.initStatus = 'running'
+      let allSuccess = true
+
+      for (let i = 0; i < this.batchItems.length; i++) {
+        this.batchCurrentIdx = i
+        this.batchItems[i].status = 'running'
+        this.deployLog = ''
+        this.initProgress = 0
+        this.currentStep = `初始化 ${this.batchItems[i].server.service_name}...`
+
+        const srv = this.batchItems[i].server
+        const formData = new FormData()
+        if (this.initForm.ssh_user) formData.append('ssh_user', this.initForm.ssh_user)
+        if (this.initForm.ssh_pass) formData.append('ssh_pass', this.initForm.ssh_pass)
+        formData.append('is_egress', '0')
+
+        const finalStatus = await new Promise((resolve) => {
+          initMdlServer(srv.id, formData).then(res => {
+            const respData = res.data
+            if (!respData || !respData.task_id) throw new Error('返回数据异常')
+            const taskId = respData.task_id
+
+            const timer = setInterval(async () => {
+              try {
+                const r = await getInitStatus(srv.id, taskId)
+                const d = r.data
+                if (!d) return
+                this.batchItems[i].log = d.log || ''
+                this.deployLog = d.log || ''
+                this.updateProgress(d.log || '')
+                this.$nextTick(() => {
+                  if (this.$refs.logPre) this.$refs.logPre.scrollTop = this.$refs.logPre.scrollHeight
+                })
+                if (d.status === 'success' || d.status === 'failed') {
+                  clearInterval(timer)
+                  this.batchItems[i].status = d.status
+                  resolve(d.status)
+                }
+              } catch (e) { console.error(e) }
+            }, 2000)
+          }).catch(e => {
+            this.batchItems[i].status = 'failed'
+            resolve('failed')
+          })
+        })
+
+        if (finalStatus !== 'success') allSuccess = false
       }
+
+      this.batchCurrentIdx = -1
+      this.starting = false
+      this.initStatus = allSuccess ? 'success' : 'failed'
+      if (allSuccess) {
+        this.initProgress = 100
+        this.$message.success(`批量初始化完成，共 ${this.batchItems.length} 个实例`)
+      } else {
+        this.$message.error('批量初始化部分失败，请查看各实例日志')
+      }
+      this.$emit('done', this.initStatus)
     },
     async handleCreateConfig() {
       try {
@@ -372,7 +491,7 @@ export default {
       this.cfgCreating = true
       try {
         const payload = {
-          server_id: this.server && this.server.id,
+          server_id: this.singleServer && this.singleServer.id,
           service_type_name: this.cfgForm.service_type_name.trim(),
           instance_name: this.cfgForm.instance_name.trim(),
           commit_message: this.cfgForm.commit_message.trim() || undefined,

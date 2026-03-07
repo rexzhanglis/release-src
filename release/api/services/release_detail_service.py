@@ -37,12 +37,17 @@ class ReleaseDetailService(object):
 
     def start(self):
         """
-        前端发布按钮
+        前端发布按钮，异步执行升级避免 HTTP 请求超时
         """
-        # 1. 获取所有的发布模块信息
+        import threading
+        from django.db import connection
         modules = self.release_plan.get_all_release_contents_objs()
-        # 2. 开始升级
-        self.upgrade(modules)
+
+        def _run():
+            connection.close()  # 子线程使用独立数据库连接
+            self.upgrade(modules)
+
+        threading.Thread(target=_run, daemon=True).start()
 
 
 
@@ -50,36 +55,40 @@ class ReleaseDetailService(object):
         """
         前端再发布按钮  从当前位置起依次发布
         """
+        import threading
+        from django.db import connection
         self.release_detail.set_log("开始再发布", self.user)
-        # 1. 获取当前位置
         active_index = self.release_detail.active
-        # 2. 获取发布模块
         modules = self.release_plan.get_all_release_contents_objs()[active_index - 1:]
-        # 3. 发布
-        self.upgrade(modules)
+
+        def _run():
+            connection.close()
+            self.upgrade(modules)
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def fail_skip(self):
         """
         失败跳过 分两种情形 发布失败 回滚失败
-         1. 获取当前位置
-         2. 获取发布模块 跳过当前位置模块
-         3. 发布
         """
-
+        import threading
+        from django.db import connection
         self.release_detail.set_log("开始失败跳过操作", self.user)
-        # 1. 获取当前位置
         active_index = self.release_detail.active
 
         if self.release_detail.status == "发布失败":
-            # 2. 获取发布模块
             modules = self.release_plan.get_all_release_contents_objs()[active_index:]
-            # 3. 发布
-            self.upgrade(modules)
+            def _run():
+                connection.close()
+                self.upgrade(modules)
+            threading.Thread(target=_run, daemon=True).start()
         elif self.release_detail.status == "回滚失败":
             start_index = self.release_plan.get_all_release_contents_objs().count() - active_index
             modules = self.release_plan.get_all_release_contents_objs().order_by("-index")[start_index - 1:]
-            # 3. 回滚
-            self._rollback(modules)
+            def _run():
+                connection.close()
+                self._rollback(modules)
+            threading.Thread(target=_run, daemon=True).start()
 
     def fail_retry(self):
         """
@@ -88,21 +97,23 @@ class ReleaseDetailService(object):
          2. 获取发布模块 包含当前位置模块
          3. 发布
         """
+        import threading
+        from django.db import connection
         self.release_detail.set_log("开始失败重试操作", self.user)
-        # 1. 获取当前位置
         active_index = self.release_detail.active
-        # 发布失败情形
         if self.release_detail.status == "发布失败":
-            # 2. 获取发布模块
             modules = self.release_plan.get_all_release_contents_objs()[active_index - 1:]
-            # 3. 发布
-            self.upgrade(modules)
-        # 回滚失败情形
+            def _run():
+                connection.close()
+                self.upgrade(modules)
+            threading.Thread(target=_run, daemon=True).start()
         elif self.release_detail.status == "回滚失败":
             start_index = self.release_plan.get_all_release_contents_objs().count() - active_index
             modules = self.release_plan.get_all_release_contents_objs().order_by("-index")[start_index:]
-            # 3. 回滚
-            self._rollback(modules)
+            def _run():
+                connection.close()
+                self._rollback(modules)
+            threading.Thread(target=_run, daemon=True).start()
 
     def rollback(self):
         """
@@ -111,16 +122,19 @@ class ReleaseDetailService(object):
          3. 获取发布模块 倒叙获取
          4. 回滚(也使用升级命令)
         """
+        import threading
+        from django.db import connection
         self.release_detail.set_log("开始回滚操作", self.user)
-        # 0. 暂停操作
         self.release_plan.get_all_release_contents_objs().update(is_release=False)
-        # 1. 获取当前位置
         active_index = self.release_detail.active
-        # 2. 获取发布模块
         start_index = self.release_plan.get_all_release_contents_objs().count() - active_index
         modules = self.release_plan.get_all_release_contents_objs().order_by("-index")[start_index:]
-        # 3. 回滚
-        self._rollback(modules)
+
+        def _run():
+            connection.close()
+            self._rollback(modules)
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def deploy_config(self, module):
         """

@@ -1,9 +1,6 @@
 - name: set backup dir
   set_fact: backup_dir={{ backups_dir }}/{{ executable | default('feeder_handler') }}_{{ existing_version }}_{{ ansible_date_time.iso8601_basic_short }}
 
-- name: create backup dir
-  file: path={{ backup_dir }} state=directory
-
-- name: copy files
-  copy: remote_src=yes src={{ install_dir }}/{{ item }} dest={{ backup_dir }}
-  with_items: "{{ backup_items }}"
+- name: backup install dir
+  command: cp -r {{ install_dir }} {{ backup_dir }}
+  become: true

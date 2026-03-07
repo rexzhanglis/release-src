@@ -7,6 +7,7 @@
     state: present
     update_cache: yes
   ignore_errors: true
+  become: true
 
 # ===== 运维用户 =====
 - name: 创建运维用户 zhixiong.zeng
@@ -15,11 +16,13 @@
     state: present
     shell: /bin/bash
     create_home: yes
+  become: true
 
 - name: 设置运维用户密码
   user:
     name: "zhixiong.zeng"
     password: "{{ 'datayes@123' | password_hash('sha512') }}"
+  become: true
 
 - name: 配置运维用户 sudoers（免密）
   copy:
@@ -27,6 +30,7 @@
     content: "zhixiong.zeng ALL=(ALL:ALL) NOPASSWD:ALL\n"
     mode: '0440'
     validate: 'visudo -cf %s'
+  become: true
 
 # ===== 系统 limits =====
 - name: 配置 limits.conf（root hard core unlimited）
@@ -35,6 +39,7 @@
     line: "root hard core unlimited"
     regexp: "^root\\s+hard\\s+core"
     state: present
+  become: true
 
 - name: 配置 limits.conf（* soft core unlimited）
   lineinfile:
@@ -42,6 +47,7 @@
     line: "* soft core unlimited"
     regexp: "^\\*\\s+soft\\s+core"
     state: present
+  become: true
 
 # ===== DNS =====
 - name: 配置 DNS（/etc/systemd/resolved.conf）
@@ -51,9 +57,11 @@
     option: DNS
     value: "10.22.117.2 10.22.117.3"
     no_extra_spaces: yes
+  become: true
 
 - name: 重启 systemd-resolved 使 DNS 生效
   systemd:
     name: systemd-resolved
     state: restarted
   ignore_errors: true
+  become: true

@@ -47,6 +47,10 @@
         <el-input v-model="form.consul_files" placeholder="feeder_handler.cfg,feeder_receiver.cfg" />
         <div style="font-size:11px;color:#909399;margin-top:4px">多个文件用逗号分隔</div>
       </el-form-item>
+      <el-form-item label="可执行文件名" prop="executable">
+        <el-input v-model="form.executable" placeholder="feeder_handler" />
+        <div style="font-size:11px;color:#909399;margin-top:4px">systemd ExecStart 中的可执行文件名</div>
+      </el-form-item>
       <el-form-item label="配置 Git URL" prop="config_git_url">
         <el-input v-model="form.config_git_url" placeholder="生产环境填 Git 配置路径，staging 可留空" />
       </el-form-item>
@@ -82,6 +86,7 @@ export default {
         consul_space: '',
         consul_token: '',
         consul_files: 'feeder_handler.cfg',
+        executable: 'feeder_handler',
         config_git_url: '',
       },
       rules: {
@@ -111,6 +116,7 @@ export default {
             consul_space: this.server.consul_space || '',
             consul_token: this.server.consul_token || '',
             consul_files: this.server.consul_files || 'feeder_handler.cfg',
+            executable: this.server.executable || 'feeder_handler',
             config_git_url: this.server.config_git_url || '',
           }
         } else {
@@ -133,6 +139,7 @@ export default {
         consul_space: '',
         consul_token: '',
         consul_files: 'feeder_handler.cfg',
+        executable: 'feeder_handler',
         config_git_url: '',
       }
       this.$nextTick(() => { this.$refs.form && this.$refs.form.clearValidate() })
@@ -149,6 +156,7 @@ export default {
         consul_space: src.consul_space || '',
         consul_token: src.consul_token || '',
         consul_files: src.consul_files || 'feeder_handler.cfg',
+        executable: src.executable || 'feeder_handler',
         config_git_url: src.config_git_url || '',
       }
       this.$nextTick(() => { this.$refs.form && this.$refs.form.clearValidate() })

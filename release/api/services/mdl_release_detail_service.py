@@ -103,6 +103,9 @@ class MdlReleaseDetailService(ReleaseDetailService):
         _env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
         if module.type == 'version':
             release_version = module.release_version.split(":")[1].strip()
+            srv = MdlServer.objects.select_related('host').get(host__fqdn=server_fqdn, service_name=service_name)
+            self.release_detail.set_log("{} 部署目录：{}，将从 consul 拉取配置文件：{}".format(
+                module.release_object, srv.install_dir, srv.consul_files or 'feeder_handler.cfg'), self.user)
             out, err, rc = ansible_runner.run_command(executable_cmd='ansible-playbook',
                                                       cmdline_args=['ansi/mdl/deploy_feeder.yml', '-i',
                                                                     'ansi/mdl/hosts',
@@ -110,12 +113,16 @@ class MdlReleaseDetailService(ReleaseDetailService):
                                                                     'version={} executable={}'.format(release_version, executable)],
                                                       envvars=_env)
         elif module.type == 'config':
+            srv = MdlServer.objects.select_related('host').get(host__fqdn=server_fqdn, service_name=service_name)
+            self.release_detail.set_log("{} 开始从 consul 拉取配置到 {}".format(module.release_object, srv.install_dir), self.user)
             out, err, rc = ansible_runner.run_command(executable_cmd='ansible-playbook',
                                                       cmdline_args=['ansi/mdl/deploy_config.yml', '-i',
                                                                     'ansi/mdl/hosts'],
                                                       envvars=_env)
         if rc != 0:
             raise Exception(out)
+        if module.type == 'config':
+            self.release_detail.set_log("{} consul 配置已拉取到目标机器 {}".format(module.release_object, srv.install_dir), self.user)
         self.release_detail.set_log(out, self.user)
         self._get_upgrade_log(server_fqdn, service_name)
 
@@ -257,8 +264,8 @@ class MdlReleaseDetailService(ReleaseDetailService):
             file_content = gitlab_client.get_project_file(file_path="{}/{}".format(git_dir, filename))
             consul_key = consul_kv_prefix + filename
             consul_client.put(key=consul_key, value=file_content.encode("utf-8"))
-            self.release_detail.set_log("{} {} 推送成功".format(module.release_object, filename), self.user)
-        self.release_detail.set_log("{} 配置发布完成".format(module.release_object), self.user)
+            self.release_detail.set_log("{} {} 推送成功 → consul: {}".format(module.release_object, filename, consul_key), self.user)
+        self.release_detail.set_log("{} 配置发布完成，共推送 {} 个文件到 consul: {}".format(module.release_object, len(filenames), consul_kv_prefix), self.user)
 
     def rollback_config(self, module):
         """

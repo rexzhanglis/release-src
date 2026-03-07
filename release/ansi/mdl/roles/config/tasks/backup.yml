@@ -4,3 +4,4 @@
 - name: backup install dir
   command: cp -r {{ install_dir }} {{ backup_dir }}
   become: true
+  ignore_errors: true

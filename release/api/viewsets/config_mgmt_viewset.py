@@ -332,7 +332,7 @@ def _sync_from_gitlab():
                 'backups_dir': mdl_server.backups_dir if mdl_server else '',
                 'service_name': mdl_server.service_name if mdl_server else '',
                 'consul_files': mdl_server.consul_files if mdl_server else 'feeder_handler.cfg',
-                'remote_python': mdl_server.remote_python if mdl_server else '/usr/bin/python3',
+                'remote_python': mdl_server.host.remote_python if mdl_server else '/usr/bin/python3',
             }
             instance, created = ConfigInstance.objects.update_or_create(
                 service_type=service_type,

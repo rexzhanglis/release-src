@@ -211,7 +211,7 @@
                 <template slot-scope="{row}">
                   <el-select v-model="row.executable" size="mini" placeholder="选择可执行文件">
                     <el-option label="feeder_handler" value="feeder_handler"/>
-                    <el-option label="feeder_receive" value="feeder_receive"/>
+                    <el-option label="feeder_receiver" value="feeder_receiver"/>
                     <el-option label="feeder_client" value="feeder_client"/>
                   </el-select>
                 </template>

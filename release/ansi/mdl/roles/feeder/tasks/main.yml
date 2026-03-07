@@ -3,11 +3,9 @@
 - name: 初始化系统（全新部署时执行）
   when: is_new_deploy | default(false) | bool
   include_tasks: init.yml
-  become: true
 
 - name: check python
   include_tasks: check_python.yml
-  become: true
 
 - name: check version
   include_tasks: check_version.yml
@@ -24,16 +22,13 @@
 - name: stop
   when: existing_version != "null"
   include_tasks: stop.yml
-  become: true
 
 - name: backup
   when: existing_version != "null"
   include_tasks: backup.yml
-  become: true
 
 - name: deploy
   include_tasks: deploy.yml
-  become: true
 
 - name: update version file
   template: src=templates/version.j2 dest={{ install_dir }}/version owner={{ user }} group={{ user }}
@@ -41,9 +36,7 @@
 
 - name: config
   include_tasks: config.yml
-  become: true
 
 - name: start
   when: start_after_deploy | default(True)
   include_tasks: start.yml
-  become: true

@@ -1,5 +1,6 @@
 - name: create install dir
   file: path={{ install_dir }} state=directory owner={{ user }} group={{ user }}
+  become: true
 
 - name: unarchive package
   unarchive:
@@ -8,16 +9,20 @@
     owner: "{{ user }}"
     group: "{{ user }}"
     extra_opts: ['--strip-components=1']
+  become: true
 
 - name: move files
   command: mv {{ install_dir }}/mdl_release/ubuntu-14.04-gcc-4.8/{{ item }} {{ install_dir }}/
   with_items: "{{ install_items }}"
+  become: true
 
 - name: clean folder
   file:
     state: absent
     path: "{{ install_dir }}/mdl_release"
+  become: true
 
 - name: put files
   copy: src=files/{{ item }} dest={{ install_dir }} owner={{ user }} group={{ user }} mode=0644
   with_items: "{{ put_files }}"
+  become: true

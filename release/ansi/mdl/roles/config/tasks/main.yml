@@ -2,7 +2,6 @@
 
 - name: check python
   include_tasks: check_python.yml
-  become: true
 
 - name: check version
   include_tasks: check_version.yml
@@ -13,18 +12,14 @@
 - name: stop
   when: existing_version != "null"
   include_tasks: stop.yml
-  become: true
 
 - name: backup
   when: existing_version != "null"
   include_tasks: backup.yml
-  become: true
 
 - name: config
   include_tasks: config.yml
-  become: true
 
 - name: start
   when: start_after_deploy | default(True)
   include_tasks: start.yml
-  become: true

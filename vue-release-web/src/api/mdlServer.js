@@ -34,6 +34,10 @@ export function getOperationLogs(hostId, params) {
   return request({ url: `/mdl-hosts/${hostId}/operation_logs/`, method: 'get', params })
 }
 
+export function batchRestartHosts(data) {
+  return request({ url: '/mdl-hosts/batch_restart/', method: 'post', data })
+}
+
 // ========== MdlServer（服务实例）==========
 
 export function getMdlServers(params) {

@@ -239,6 +239,128 @@ class HostViewSet(viewsets.ModelViewSet):
             return Response({'code': 404, 'message': '任务不存在'},
                             status=drf_status.HTTP_404_NOT_FOUND)
 
+    @action(detail=False, methods=['post'], url_path='batch_restart')
+    def batch_restart(self, request):
+        """
+        跨多台机器批量重启 systemd 服务。
+        请求体：
+          host_ids: [1, 2, 3]          # 目标机器 ID 列表
+          service_pattern: "mdl-"      # 服务名前缀匹配（精确前缀）
+          consul_pull: false           # 是否先拉取配置
+        返回：每台机器的执行结果
+        """
+        host_ids = request.data.get('host_ids') or []
+        service_pattern = (request.data.get('service_pattern') or '').strip()
+        do_consul_pull = request.data.get('consul_pull', False) in (True, 'true', '1', 1)
+
+        if not host_ids:
+            return Response({'code': 400, 'message': 'host_ids 不能为空'},
+                            status=drf_status.HTTP_400_BAD_REQUEST)
+        if not service_pattern:
+            return Response({'code': 400, 'message': 'service_pattern 不能为空'},
+                            status=drf_status.HTTP_400_BAD_REQUEST)
+
+        try:
+            ssh_pass = ''
+            try:
+                ssh_pass = Constance.get_value('ansible_ssh_pass') or ''
+            except Exception:
+                pass
+            if not ssh_pass:
+                ssh_pass = os.environ.get('ANSIBLE_SSH_PASS', '')
+
+            hosts = Host.objects.filter(id__in=host_ids)
+            operator = getattr(request.user, 'username', 'unknown')
+
+            import subprocess as _sp
+            import tempfile as _tf
+            import concurrent.futures
+
+            def _restart_one(host):
+                ssh_user = os.environ.get('ANSIBLE_SSH_USER', '') or host.user or 'root'
+                tmpdir = _tf.mkdtemp(prefix='mdl_batch_rst_')
+                try:
+                    hosts_path = os.path.join(tmpdir, 'hosts')
+                    with open(hosts_path, 'w') as f:
+                        f.write(f"release ansible_ssh_host={host.ip} "
+                                f"ansible_ssh_user={ssh_user} "
+                                f"ansible_ssh_pass={ssh_pass}\n")
+                    env = os.environ.copy()
+                    env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
+                    output_parts = []
+
+                    # 获取匹配的 service 列表
+                    list_proc = _sp.run(
+                        ['ansible', 'release', '-i', hosts_path, '-m', 'shell',
+                         '-a', f'systemctl list-units --type=service --all --no-pager --no-legend | awk \'{{print $1}}\' | grep \'^{service_pattern}\''],
+                        stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
+                    )
+                    matched = [s.strip() for s in list_proc.stdout.splitlines() if s.strip() and s.strip().endswith('.service')]
+
+                    if not matched:
+                        return {
+                            'host_id': host.id, 'fqdn': host.fqdn, 'ip': host.ip,
+                            'ok': False, 'matched': [], 'output': f'未找到匹配 {service_pattern}* 的服务'
+                        }
+
+                    # consul_pull
+                    if do_consul_pull:
+                        ready_srv = host.services.filter(init_status='ready').first()
+                        if ready_srv:
+                            pull_script = ready_srv.install_dir.rstrip('/') + '/consul_pull.py'
+                            remote_python = host.remote_python or '/usr/bin/python3'
+                            consul_token = ready_srv.consul_token or ''
+                            pull_env = f'CONSUL_TOKEN={consul_token} {remote_python} {pull_script}'
+                            pull_proc = _sp.run(
+                                ['ansible', 'release', '-i', hosts_path, '-m', 'shell', '-a', pull_env],
+                                stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
+                            )
+                            output_parts.append(f'[consul_pull]\n{pull_proc.stdout or pull_proc.stderr}')
+
+                    # 批量重启
+                    svc_list = ' '.join(matched)
+                    rst_proc = _sp.run(
+                        ['ansible', 'release', '-i', hosts_path, '-m', 'shell',
+                         '-a', f'systemctl restart {svc_list}', '--become'],
+                        stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=120
+                    )
+                    output_parts.append(f'[restart {svc_list}]\n{rst_proc.stdout or rst_proc.stderr}')
+                    ok = rst_proc.returncode == 0
+                    _write_op_log(
+                        host=host, service_name=svc_list, action='systemd_restart',
+                        operator=operator, status='success' if ok else 'failed',
+                        detail='\n'.join(output_parts),
+                    )
+                    return {
+                        'host_id': host.id, 'fqdn': host.fqdn, 'ip': host.ip,
+                        'ok': ok, 'matched': matched, 'output': '\n'.join(output_parts)
+                    }
+                except Exception as ex:
+                    return {
+                        'host_id': host.id, 'fqdn': host.fqdn, 'ip': host.ip,
+                        'ok': False, 'matched': [], 'output': str(ex)
+                    }
+                finally:
+                    shutil.rmtree(tmpdir, ignore_errors=True)
+
+            results = []
+            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
+                futures = {pool.submit(_restart_one, h): h for h in hosts}
+                for f in concurrent.futures.as_completed(futures):
+                    results.append(f.result())
+
+            ok_count = sum(1 for r in results if r['ok'])
+            return ApiResponse(data={
+                'total': len(results),
+                'ok_count': ok_count,
+                'fail_count': len(results) - ok_count,
+                'results': results,
+            })
+
+        except Exception as e:
+            return Response({'code': 500, 'message': str(e)},
+                            status=drf_status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=True, methods=['get'], url_path='operation_logs')
     def operation_logs(self, request, pk=None):
         """

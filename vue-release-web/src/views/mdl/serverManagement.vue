@@ -51,6 +51,16 @@
       >
         刷新
       </el-button>
+      <el-button
+        v-if="checkedHosts.length > 0"
+        size="small"
+        type="warning"
+        icon="el-icon-refresh"
+        style="margin-left:8px"
+        @click="showBatchRestart = true"
+      >
+        批量重启（{{ checkedHosts.length }} 台）
+      </el-button>
     </div>
 
     <!-- 物理机表格 -->
@@ -61,7 +71,9 @@
       size="small"
       style="width:100%;margin-top:12px"
       @sort-change="handleSortChange"
+      @selection-change="checkedHosts = $event"
     >
+      <el-table-column type="selection" width="40" />
       <el-table-column prop="fqdn" label="FQDN" min-width="180" show-overflow-tooltip sortable="custom">
         <template slot-scope="{ row }">
           <router-link
@@ -152,11 +164,71 @@
         <el-button @click="showLabelMgr = false">关闭</el-button>
       </div>
     </el-dialog>
+    <!-- 跨机器批量重启弹窗 -->
+    <el-dialog
+      title="跨机器批量重启"
+      :visible.sync="showBatchRestart"
+      width="600px"
+      :close-on-click-modal="false"
+      @close="batchRestartResult = null"
+    >
+      <template v-if="!batchRestartResult">
+        <div style="margin-bottom:12px;font-size:13px;color:#606266">
+          已选中 <strong>{{ checkedHosts.length }}</strong> 台机器，将在每台机器上重启前缀匹配的 systemd 服务。
+        </div>
+        <el-form label-width="110px" size="small">
+          <el-form-item label="服务名前缀">
+            <el-input v-model="batchRestartPattern" placeholder="如 mdl-" style="width:240px" />
+            <div style="font-size:11px;color:#909399;margin-top:4px">匹配每台机器上以此前缀开头的所有 systemd 服务</div>
+          </el-form-item>
+          <el-form-item label="拉取配置">
+            <el-checkbox v-model="batchRestartConsulPull">重启前先执行 consul_pull.py 拉取最新配置</el-checkbox>
+          </el-form-item>
+        </el-form>
+        <div style="background:#f5f7fa;border-radius:4px;padding:8px 12px;font-size:12px;color:#909399">
+          <div v-for="h in checkedHosts" :key="h.id">{{ h.fqdn }} ({{ h.ip }})</div>
+        </div>
+      </template>
+      <template v-else>
+        <div style="margin-bottom:8px;font-size:13px">
+          完成：{{ batchRestartResult.ok_count }}/{{ batchRestartResult.total }} 台成功
+        </div>
+        <el-table :data="batchRestartResult.results" size="mini" border max-height="320">
+          <el-table-column prop="fqdn" label="机器" min-width="140" show-overflow-tooltip />
+          <el-table-column prop="ip" label="IP" width="130" />
+          <el-table-column label="匹配服务" min-width="160" show-overflow-tooltip>
+            <template slot-scope="{ row }">
+              <span style="font-family:monospace;font-size:11px">{{ (row.matched || []).join(', ') || '-' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="结果" width="70" align="center">
+            <template slot-scope="{ row }">
+              <el-tag :type="row.ok ? 'success' : 'danger'" size="mini" effect="plain">{{ row.ok ? '成功' : '失败' }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="详情" show-overflow-tooltip>
+            <template slot-scope="{ row }">
+              <span style="font-size:11px;color:#909399">{{ row.output || '-' }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </template>
+      <span slot="footer">
+        <el-button size="small" @click="showBatchRestart = false">{{ batchRestartResult ? '关闭' : '取消' }}</el-button>
+        <el-button
+          v-if="!batchRestartResult"
+          size="small" type="warning"
+          :loading="batchRestartLoading"
+          :disabled="!batchRestartPattern"
+          @click="handleBatchRestart"
+        >确认批量重启</el-button>
+      </span>
+    </el-dialog>
   </div>
 </template>
 
 <script>
-import { getHosts, deleteHost, getLabels, createLabel, deleteLabel } from '@/api/mdlServer'
+import { getHosts, deleteHost, getLabels, createLabel, deleteLabel, batchRestartHosts } from '@/api/mdlServer'
 import HostFormModal from './components/HostFormModal'
 
 export default {
@@ -183,6 +255,12 @@ export default {
       showLabelMgr: false,
       allLabels: [],
       newLabelName: '',
+      checkedHosts: [],
+      showBatchRestart: false,
+      batchRestartPattern: 'mdl-',
+      batchRestartConsulPull: false,
+      batchRestartLoading: false,
+      batchRestartResult: null,
     }
   },
   created() {
@@ -289,6 +367,24 @@ export default {
       } catch (e) {
         const msg = (e.response && e.response.data && e.response.data.message) || e.message || '创建失败'
         this.$message.error(msg)
+      }
+    },
+
+    async handleBatchRestart() {
+      if (!this.batchRestartPattern) return
+      this.batchRestartLoading = true
+      try {
+        const res = await batchRestartHosts({
+          host_ids: this.checkedHosts.map(h => h.id),
+          service_pattern: this.batchRestartPattern,
+          consul_pull: this.batchRestartConsulPull,
+        })
+        this.batchRestartResult = res.data
+      } catch (e) {
+        const msg = (e.response && e.response.data && e.response.data.message) || e.message || '操作失败'
+        this.$message.error(msg)
+      } finally {
+        this.batchRestartLoading = false
       }
     },
 

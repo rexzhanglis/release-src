@@ -44,6 +44,16 @@ from mdl.models import MdlServer
 class MdlReleaseDetailService(ReleaseDetailService):
 
     def upgrade(self, modules):
+        import threading
+        from django.db import connection
+
+        def _run():
+            connection.close()
+            self._do_upgrade(modules)
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _do_upgrade(self, modules):
         try:
             # 1. 发布
             for module in modules:

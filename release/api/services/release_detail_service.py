@@ -37,104 +37,58 @@ class ReleaseDetailService(object):
 
     def start(self):
         """
-        前端发布按钮，异步执行升级避免 HTTP 请求超时
+        前端发布按钮
         """
-        import threading
-        from django.db import connection
         modules = self.release_plan.get_all_release_contents_objs()
-
-        def _run():
-            connection.close()  # 子线程使用独立数据库连接
-            self.upgrade(modules)
-
-        threading.Thread(target=_run, daemon=True).start()
-
-
+        self.upgrade(modules)
 
     def re_deploy(self):
         """
         前端再发布按钮  从当前位置起依次发布
         """
-        import threading
-        from django.db import connection
         self.release_detail.set_log("开始再发布", self.user)
         active_index = self.release_detail.active
         modules = self.release_plan.get_all_release_contents_objs()[active_index - 1:]
-
-        def _run():
-            connection.close()
-            self.upgrade(modules)
-
-        threading.Thread(target=_run, daemon=True).start()
+        self.upgrade(modules)
 
     def fail_skip(self):
         """
         失败跳过 分两种情形 发布失败 回滚失败
         """
-        import threading
-        from django.db import connection
         self.release_detail.set_log("开始失败跳过操作", self.user)
         active_index = self.release_detail.active
-
         if self.release_detail.status == "发布失败":
             modules = self.release_plan.get_all_release_contents_objs()[active_index:]
-            def _run():
-                connection.close()
-                self.upgrade(modules)
-            threading.Thread(target=_run, daemon=True).start()
+            self.upgrade(modules)
         elif self.release_detail.status == "回滚失败":
             start_index = self.release_plan.get_all_release_contents_objs().count() - active_index
             modules = self.release_plan.get_all_release_contents_objs().order_by("-index")[start_index - 1:]
-            def _run():
-                connection.close()
-                self._rollback(modules)
-            threading.Thread(target=_run, daemon=True).start()
+            self._rollback(modules)
 
     def fail_retry(self):
         """
-         失败重试 分两种情形 发布失败 回滚失败
-         1. 获取当前位置
-         2. 获取发布模块 包含当前位置模块
-         3. 发布
+        失败重试 分两种情形 发布失败 回滚失败
         """
-        import threading
-        from django.db import connection
         self.release_detail.set_log("开始失败重试操作", self.user)
         active_index = self.release_detail.active
         if self.release_detail.status == "发布失败":
             modules = self.release_plan.get_all_release_contents_objs()[active_index - 1:]
-            def _run():
-                connection.close()
-                self.upgrade(modules)
-            threading.Thread(target=_run, daemon=True).start()
+            self.upgrade(modules)
         elif self.release_detail.status == "回滚失败":
             start_index = self.release_plan.get_all_release_contents_objs().count() - active_index
             modules = self.release_plan.get_all_release_contents_objs().order_by("-index")[start_index:]
-            def _run():
-                connection.close()
-                self._rollback(modules)
-            threading.Thread(target=_run, daemon=True).start()
+            self._rollback(modules)
 
     def rollback(self):
         """
-         1. 暂停
-         2. 获取当前位置
-         3. 获取发布模块 倒叙获取
-         4. 回滚(也使用升级命令)
+        回滚操作
         """
-        import threading
-        from django.db import connection
         self.release_detail.set_log("开始回滚操作", self.user)
         self.release_plan.get_all_release_contents_objs().update(is_release=False)
         active_index = self.release_detail.active
         start_index = self.release_plan.get_all_release_contents_objs().count() - active_index
         modules = self.release_plan.get_all_release_contents_objs().order_by("-index")[start_index:]
-
-        def _run():
-            connection.close()
-            self._rollback(modules)
-
-        threading.Thread(target=_run, daemon=True).start()
+        self._rollback(modules)
 
     def deploy_config(self, module):
         """

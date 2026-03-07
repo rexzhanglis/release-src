@@ -11,8 +11,7 @@
   become: true
 
 - name: move files
-  command: mv {{ install_dir }}/mdl_release/ubuntu-14.04-gcc-4.8/{{ item }} {{ install_dir }}/
-  with_items: "{{ install_items }}"
+  shell: mv {{ install_dir }}/mdl_release/ubuntu-14.04-gcc-4.8/* {{ install_dir }}/
   become: true
 
 - name: clean folder

@@ -517,6 +517,7 @@ export default {
   created() {
     if (this.isHostMode) {
       this.fetchHost()
+      this.fetchServices()
       this.fetchLogs()
     } else {
       this.fetchServer()
@@ -630,6 +631,11 @@ export default {
         const d = res.data || {}
         this.serviceList = d.services || []
         this.systemdRefreshedAt = d.refreshed_at || ''
+        // 缓存为空时自动触发实时刷新
+        if (!this.serviceList.length && !this.systemdRefreshedAt) {
+          this.loading = false
+          await this.handleRefreshNow()
+        }
       } catch (e) {
         this.$message.error('获取 systemd 服务列表失败：' + (e.message || ''))
       } finally {

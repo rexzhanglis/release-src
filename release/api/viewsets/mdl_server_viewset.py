@@ -932,7 +932,11 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                     stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=15
                 )
             elif op == 'delete':
-                proc = _run_shell(f'rm -f {service_path} && systemctl disable {name} 2>/dev/null || true')
+                proc = _run_shell(
+                    f'systemctl stop {name} 2>/dev/null || true && '
+                    f'systemctl disable {name} 2>/dev/null || true && '
+                    f'rm -f {service_path}'
+                )
             elif op == 'rename':
                 new_path = f'{service_dir}/{new_name}'
                 proc = _run_shell(

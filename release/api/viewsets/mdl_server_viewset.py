@@ -101,7 +101,7 @@ class HostViewSet(viewsets.ModelViewSet):
             qs = qs.filter(Q(fqdn__icontains=q) | Q(ip__icontains=q))
         label_id = self.request.query_params.get('label_id', '').strip()
         if label_id:
-            qs = qs.filter(services__label_set__id=label_id).distinct()
+            qs = qs.filter(services__label__id=label_id).distinct()
         return qs
 
     def destroy(self, request, *args, **kwargs):

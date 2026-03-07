@@ -323,7 +323,7 @@ def _sync_from_gitlab():
                 consul_url, kv_prefix, st_name, inst_name)
 
             # 从 MdlServer 表匹配同 IP 的记录，复用已有部署信息
-            mdl_server = MdlServer.objects.filter(ip=host_ip).first() if host_ip else None
+            mdl_server = MdlServer.objects.filter(host__ip=host_ip).first() if host_ip else None
             defaults = {
                 'host_ip': host_ip,
                 'port': port,

@@ -8,6 +8,7 @@
     owner: "{{ user }}"
     group: "{{ user }}"
     mode: '0755'
+  become: true
 
 - name: 创建备份目录
   file:
@@ -16,6 +17,7 @@
     owner: "{{ user }}"
     group: "{{ user }}"
     mode: '0755'
+  become: true
 
 - name: 创建日志目录
   file:
@@ -24,12 +26,14 @@
     owner: "{{ user }}"
     group: "{{ user }}"
     mode: '0755'
+  become: true
 
 - name: 创建 coredump 目录 /datayes/corefiles
   file:
     path: /datayes/corefiles
     state: directory
     mode: '0777'
+  become: true
 
 # ===== Coredump =====
 - name: 配置 coredump（/etc/sysctl.conf）
@@ -38,10 +42,12 @@
     line: "kernel.core_pattern=/datayes/corefiles/core.%t.%e.%p"
     regexp: "^kernel.core_pattern"
     state: present
+  become: true
 
 - name: sysctl -p 使 coredump 配置生效
   command: sysctl -p
   ignore_errors: true
+  become: true
 
 # ===== Systemd 服务 =====
 - name: 部署 systemd service 文件
@@ -51,12 +57,14 @@
     owner: root
     group: root
     mode: '0644'
+  become: true
 
 - name: systemctl daemon-reload 并启用服务开机自启
   systemd:
     name: "{{ service_name }}"
     enabled: yes
     daemon_reload: yes
+  become: true
 
 # ===== 出口机器额外步骤 =====
 - name: 上传出口机器配置文件到安装目录
@@ -67,6 +75,7 @@
     owner: "{{ user }}"
     group: "{{ user }}"
     mode: '0644'
+  become: true
 
 - name: 添加 cron 任务（每 10 分钟拉取云配置）
   when: is_egress | default(false) | bool
@@ -75,3 +84,4 @@
     job: "cd {{ install_dir }} && {{ remote_python | default('/usr/bin/python3') }} get_cloud_conf.py"
     minute: "*/10"
     state: present
+  become: true

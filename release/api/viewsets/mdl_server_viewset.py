@@ -291,6 +291,7 @@ class MdlServerSerializer(serializers.ModelSerializer):
             'id', 'host_id', 'fqdn', 'ip', 'user', 'remote_python',
             'role_name', 'service_name', 'install_dir', 'backups_dir',
             'consul_space', 'consul_token', 'consul_files',
+            'executable',
             'config_git_url', 'is_consistent', 'check_detail',
             'init_status',
             'created_time', 'last_updated_time',
@@ -510,6 +511,7 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 'backups_dir': server.backups_dir,
                 'service_name': server.service_name,
                 'consul_files': server.consul_files or 'feeder_handler.cfg',
+                'executable': server.executable or 'feeder_handler',
                 'is_egress': is_egress,
             }
 

@@ -5,6 +5,7 @@
     state: present
     update_cache: yes
   ignore_errors: true
+  become: true
 
 # ===== 运维用户 =====
 - name: 创建运维用户 zhixiong.zeng
@@ -13,11 +14,13 @@
     state: present
     shell: /bin/bash
     create_home: yes
+  become: true
 
 - name: 设置运维用户密码
   user:
     name: "zhixiong.zeng"
     password: "{{ 'datayes@123' | password_hash('sha512') }}"
+  become: true
 
 - name: 配置运维用户 sudoers（免密）
   copy:
@@ -25,6 +28,7 @@
     content: "zhixiong.zeng ALL=(ALL:ALL) NOPASSWD:ALL\n"
     mode: '0440'
     validate: 'visudo -cf %s'
+  become: true
 
 # ===== 系统 limits =====
 - name: 配置 limits.conf（root hard core unlimited）
@@ -33,6 +37,7 @@
     line: "root hard core unlimited"
     regexp: "^root\\s+hard\\s+core"
     state: present
+  become: true
 
 - name: 配置 limits.conf（* soft core unlimited）
   lineinfile:
@@ -40,6 +45,7 @@
     line: "* soft core unlimited"
     regexp: "^\\*\\s+soft\\s+core"
     state: present
+  become: true
 
 # ===== 目录结构 =====
 - name: 创建安装目录
@@ -49,6 +55,7 @@
     owner: "{{ user }}"
     group: "{{ user }}"
     mode: '0755'
+  become: true
 
 - name: 创建备份目录
   file:
@@ -57,6 +64,7 @@
     owner: "{{ user }}"
     group: "{{ user }}"
     mode: '0755'
+  become: true
 
 - name: 创建日志目录
   file:
@@ -65,12 +73,14 @@
     owner: "{{ user }}"
     group: "{{ user }}"
     mode: '0755'
+  become: true
 
 - name: 创建 coredump 目录 /datayes/corefiles
   file:
     path: /datayes/corefiles
     state: directory
     mode: '0777'
+  become: true
 
 # ===== Coredump =====
 - name: 配置 coredump（/etc/sysctl.conf）
@@ -79,10 +89,12 @@
     line: "kernel.core_pattern=/datayes/corefiles/core.%t.%e.%p"
     regexp: "^kernel.core_pattern"
     state: present
+  become: true
 
 - name: sysctl -p 使 coredump 配置生效
   command: sysctl -p
   ignore_errors: true
+  become: true
 
 # ===== DNS =====
 - name: 配置 DNS（/etc/systemd/resolved.conf）
@@ -92,12 +104,14 @@
     option: DNS
     value: "10.22.117.2 10.22.117.3"
     no_extra_spaces: yes
+  become: true
 
 - name: 重启 systemd-resolved 使 DNS 生效
   systemd:
     name: systemd-resolved
     state: restarted
   ignore_errors: true
+  become: true
 
 # ===== Systemd 服务 =====
 - name: 部署 systemd service 文件
@@ -107,12 +121,14 @@
     owner: root
     group: root
     mode: '0644'
+  become: true
 
 - name: systemctl daemon-reload 并启用服务开机自启
   systemd:
     name: "{{ service_name }}"
     enabled: yes
     daemon_reload: yes
+  become: true
 
 # ===== 出口机器额外步骤 =====
 - name: 上传出口机器配置文件到安装目录
@@ -123,6 +139,7 @@
     owner: "{{ user }}"
     group: "{{ user }}"
     mode: '0644'
+  become: true
 
 - name: 添加 cron 任务（每 10 分钟拉取云配置）
   when: is_egress | default(false) | bool
@@ -131,3 +148,4 @@
     job: "cd {{ install_dir }} && {{ remote_python | default('/usr/bin/python3') }} get_cloud_conf.py"
     minute: "*/10"
     state: present
+  become: true

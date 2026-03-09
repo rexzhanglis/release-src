@@ -273,6 +273,7 @@ class MdlReleaseDetailService(ReleaseDetailService):
         cmd = """grep -a $(date '+%Y-%m-%d') {} | awk -v dt="$(date '+%Y-%m-%d %T' -d '-1 minutes')" -F, '$1 > dt'""".format(
             log_file)
         res = ssh.send_cmd(cmd)
+        ssh.close()
         self.release_detail.log = self.release_detail.log + "{}信息如下：\n".format(log_name) + "\n".join(res)
         self.release_detail.save()
 

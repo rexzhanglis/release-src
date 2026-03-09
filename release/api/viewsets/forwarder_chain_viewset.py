@@ -619,7 +619,12 @@ def fetch_heartbeat(ip, fqdn, port):
 
 def search_heartbeat(service_id, msg_id):
     connection.close()  # 强制关闭旧连接，防止 build_chain 长查询后连接超时断开
-    servers = list(MdlServer.objects.filter(init_status='ready').select_related('host'))
+    # 只查接收机和转发机，其他服务（barcal/dispatcher等）不支持 heartbeat
+    HEARTBEAT_EXECUTABLES = ('feeder_receiver', 'feeder_handler')
+    servers = list(MdlServer.objects.filter(
+        init_status='ready',
+        executable__in=HEARTBEAT_EXECUTABLES,
+    ).select_related('host'))
     if not servers:
         return [], []
 

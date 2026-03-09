@@ -18,8 +18,7 @@ class SshClient(object):
         stdin, stdout, stderr = self.client.exec_command(cmd, timeout=10)
         if stderr.readline():
             print(stderr.readline())
-            return ''
-        self.client.close()
+            return []
         return stdout.readlines()
 
     def send_cmd2(self, cmd):

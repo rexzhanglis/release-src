@@ -290,6 +290,19 @@ def build_chain(service_id, msg_id):
     """
     ip_to_cf, ip_port_to_cf, port_to_cfs, all_cfs, receiver_ip_set = _build_ip_to_config_map()
 
+    # 所有在 MdlServer 表里的 IP 都是内部机器，不应归为外部源
+    internal_ip_set = set(
+        MdlServer.objects.select_related('host').values_list('host__ip', flat=True)
+    ) | receiver_ip_set
+
+    # 域名 -> IP 映射（fqdn/hostname -> ip），用于解析上游地址里写的是域名的情况
+    from mdl.models import Host
+    fqdn_to_ip = {
+        h.fqdn: h.ip
+        for h in Host.objects.all()
+        if h.fqdn and h.ip
+    }
+
     nodes = {}   # node_id -> node_info
     edges = set()  # (from_id, to_id) 去重
     edge_list = []
@@ -360,6 +373,9 @@ def build_chain(service_id, msg_id):
                 # 127.0.0.1 表示本机，替换为当前配置文件所在机器的真实 IP
                 if up_ip in ('127.0.0.1', '0.0.0.0', 'localhost'):
                     up_ip = this_ip
+                # 域名转 IP（配置里写的是 fqdn，如 mdl-fwd-prd01.wmcloud.com）
+                if up_ip and up_ip.count('.') != 3:
+                    up_ip = fqdn_to_ip.get(up_ip, up_ip)
                 if up_ip in visited_ips:
                     continue
 
@@ -382,11 +398,14 @@ def build_chain(service_id, msg_id):
                 if upstream_cf is None:
                     if up_ip in receiver_ip_set:
                         # 接收机（IP 已知但配置文件未能建立索引）
-                        recv_instance = up_ip
-                        get_or_create_node(up_ip, recv_instance, 'receiver', matched_svcs)
+                        get_or_create_node(up_ip, up_ip, 'receiver', matched_svcs)
+                        add_edge(up_ip, this_ip, matched_svcs)
+                    elif up_ip in internal_ip_set:
+                        # 内部转发机（MdlServer 里有记录但配置文件未录入）
+                        get_or_create_node(up_ip, up_ip, 'forwarder', matched_svcs)
                         add_edge(up_ip, this_ip, matched_svcs)
                     else:
-                        # 真正的外部源（交易所，IP 在平台上没有任何配置文件）
+                        # 真正的外部源（交易所，IP 在平台上没有任何记录）
                         ext_id = f'{up_ip}:{up_port}'
                         get_or_create_node(ext_id, ext_id, 'external', matched_svcs)
                         add_edge(ext_id, this_ip, matched_svcs)

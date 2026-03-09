@@ -21,3 +21,10 @@ access_log_format = '%(t)s %(p)s %(h)s "%(r)s" %(s)s %(L)s %(b)s %(f)s" "%(a)s"'
 
 accesslog = "/var/log/release/gunicorn_access.log"  # 访问日志文件
 errorlog = "/var/log/release/gunicorn_error.log"  # 错误日志文件
+
+
+def post_fork(server, worker):
+    # fork 后子进程关闭从父进程继承的数据库连接，避免多进程共享同一连接导致 OperationalError
+    from django.db import connections
+    for conn in connections.all():
+        conn.close()

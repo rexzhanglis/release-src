@@ -66,7 +66,7 @@
             <i class="el-icon-user" /> 绿色边框节点有下游客户端，点击查看
           </el-tag>
           <span style="margin-left:auto;display:flex;gap:8px;align-items:center">
-            <span class="legend-dot" style="background:#f56c6c"></span><span class="legend-text">外部源</span>
+            <span class="legend-dot" style="background:#f56c6c"></span><span class="legend-text">接收机(外部)</span>
             <span class="legend-dot" style="background:#e6a23c"></span><span class="legend-text">接收机</span>
             <span class="legend-dot" style="background:#409eff"></span><span class="legend-text">转发机</span>
             <span class="legend-dot" style="background:#67c23a"></span><span class="legend-text">聚合转发</span>
@@ -416,7 +416,7 @@ export default {
     },
 
     nodeTypeLabel(node) {
-      return { external: '外部源', receiver: '接收机', forwarder: '转发机', aggregator: '聚合转发' }[node.type] || node.type
+      return { external: '接收机', receiver: '接收机', forwarder: '转发机', aggregator: '聚合转发' }[node.type] || node.type
     },
 
     nodeDisplayName(node) {

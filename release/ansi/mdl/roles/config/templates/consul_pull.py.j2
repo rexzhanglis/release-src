@@ -1,8 +1,11 @@
 import os
 import base64
 import json
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
+try:
+    from urllib.request import Request, urlopen
+    from urllib.error import HTTPError, URLError
+except ImportError:
+    from urllib2 import Request, urlopen, HTTPError, URLError
 
 CONSUL_SPACE = '{{ consul_space }}'
 CONSUL_TOKEN = os.environ['CONSUL_TOKEN']

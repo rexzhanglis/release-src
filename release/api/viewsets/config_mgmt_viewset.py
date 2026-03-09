@@ -360,8 +360,19 @@ def _sync_from_gitlab():
                             service_name__icontains=after
                         ).first()
                 if not mdl_server:
-                    # 无后缀 或 未找到精确匹配：取该 IP 下第一条（兼容旧逻辑）
-                    mdl_server = MdlServer.objects.filter(host__ip=host_ip).order_by('id').first()
+                    # 无后缀 或 未找到精确匹配：按 service_type 目录名推断 executable 类型
+                    # receiver 目录 → feeder_receiver，其他 → feeder_handler
+                    st_leaf = st_name.split('/')[-1].lower()
+                    if 'receiver' in st_leaf:
+                        mdl_server = MdlServer.objects.filter(
+                            host__ip=host_ip, executable='feeder_receiver'
+                        ).order_by('id').first()
+                    if not mdl_server:
+                        mdl_server = MdlServer.objects.filter(
+                            host__ip=host_ip, executable='feeder_handler'
+                        ).order_by('id').first()
+                    if not mdl_server:
+                        mdl_server = MdlServer.objects.filter(host__ip=host_ip).order_by('id').first()
 
             defaults = {
                 'host_ip': host_ip,
@@ -1109,6 +1120,15 @@ class ConfigFileViewSet(viewsets.ModelViewSet):
 class ConfigSyncViewSet(viewsets.ViewSet):
     """从 GitLab 同步配置树到数据库"""
     permission_classes = [ConfigMgmtPermission]
+
+    @action(detail=False, methods=['get'], url_path='defaults')
+    def defaults(self, request):
+        """返回新增服务实例时的默认填充值（consul token、gitlab url 等）"""
+        cfg = _get_gitlab_settings()
+        return ApiResponse(data={
+            'consul_token': getattr(settings, 'CONFIG_CONSUL_TOKEN', ''),
+            'config_git_url': cfg['url'],
+        })
 
     def create(self, request):
         try:

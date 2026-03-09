@@ -14,3 +14,10 @@ export function queryMsgChain(msg) {
 export function getServices() {
   return request({ url: '/mdl-forwarder/chain/services/', method: 'get' })
 }
+
+/**
+ * 获取交易所对端 IP 映射表
+ */
+export function getExchangeMap() {
+  return request({ url: '/mdl-forwarder/chain/exchange_map/', method: 'get' })
+}

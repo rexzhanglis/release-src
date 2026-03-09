@@ -321,6 +321,7 @@ export default {
         release_object: ''
       },
       releaseObjectOptions: [],
+      serverExecutable: {},
       projectOptions: [],
       parentId: 0,
       value1: null,
@@ -399,7 +400,7 @@ export default {
               temp.release_version = response.data
               temp.release_object = item
               temp.config_file = ''
-              temp.executable = 'feeder_handler'
+              temp.executable = this.serverExecutable[item] || 'feeder_handler'
               this.form.selectList.push(temp)
             })
           })
@@ -439,6 +440,7 @@ export default {
       getMdlReleaseServer().then(response => {
         this.releaseObjectOptions = response.data.release_object
         this.labelToServer = response.data.label_to_server
+        this.serverExecutable = response.data.server_executable || {}
       })
       this.dialogFormVisible = true
       this.$nextTick(() => {
@@ -512,6 +514,7 @@ export default {
       getMdlReleaseServer().then(response => {
         this.releaseObjectOptions = response.data.release_object
         this.labelToServer = response.data.label_to_server
+        this.serverExecutable = response.data.server_executable || {}
       })
       this.dialogFormVisible = true
     },

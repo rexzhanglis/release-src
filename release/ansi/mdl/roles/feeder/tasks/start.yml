@@ -7,3 +7,16 @@
   when: ansible_service_mgr == 'upstart'
   service: name={{ service_name }} state=started
   become: true
+
+- name: wait for service to stabilize
+  wait_for:
+    timeout: 8
+  delegate_to: localhost
+  become: false
+
+- name: check service is active
+  shell: systemctl is-active {{ service_name }}
+  become: true
+  register: svc_active
+  failed_when: svc_active.stdout.strip() != 'active'
+  changed_when: false

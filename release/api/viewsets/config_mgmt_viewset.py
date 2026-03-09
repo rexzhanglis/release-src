@@ -323,7 +323,46 @@ def _sync_from_gitlab():
                 consul_url, kv_prefix, st_name, inst_name)
 
             # 从 MdlServer 表匹配同 IP 的记录，复用已有部署信息
-            mdl_server = MdlServer.objects.filter(host__ip=host_ip).first() if host_ip else None
+            # 实例名格式：<host_prefix>_<ip>  或  <host_prefix>_<ip>_<svc_suffix>
+            # 例如 forward-test03_10.24.71.77         -> mdl_server service_name=mdl-forward
+            #      forward-test03_10.24.71.77_forward1 -> mdl_server service_name=mdl-forward1
+            mdl_server = None
+            if host_ip:
+                # 尝试从实例名末尾推断 service_name 后缀
+                # 找到 IP 在实例名中的位置，之后的部分就是服务后缀
+                ip_escaped = host_ip.replace('.', r'\.')
+                import re as _re
+                m = _re.search(r'_' + ip_escaped.replace(r'\.', r'[._]') + r'_(.+)$',
+                               inst_name.replace('-', '_'))
+                if not m:
+                    # 直接用下划线版本找
+                    ip_underscore = host_ip.replace('.', '_')
+                    idx = inst_name.replace('-', '_').replace('.', '_').find(ip_underscore)
+                    if idx != -1:
+                        after = inst_name[idx + len(ip_underscore):].lstrip('_.-')
+                    else:
+                        after = ''
+                else:
+                    after = m.group(1)
+
+                if after:
+                    # 有后缀：精确按 IP + 服务名匹配
+                    # 后缀如 forward1 对应 service_name=mdl-forward1
+                    candidate_service = 'mdl-' + after
+                    mdl_server = MdlServer.objects.filter(
+                        host__ip=host_ip,
+                        service_name=candidate_service
+                    ).first()
+                    # 降级：不限 service_name，取该 IP 下 service_name 包含后缀的
+                    if not mdl_server:
+                        mdl_server = MdlServer.objects.filter(
+                            host__ip=host_ip,
+                            service_name__icontains=after
+                        ).first()
+                if not mdl_server:
+                    # 无后缀 或 未找到精确匹配：取该 IP 下第一条（兼容旧逻辑）
+                    mdl_server = MdlServer.objects.filter(host__ip=host_ip).order_by('id').first()
+
             defaults = {
                 'host_ip': host_ip,
                 'port': port,

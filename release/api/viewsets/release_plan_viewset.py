@@ -45,7 +45,7 @@ class ReleasePlanViewSet(viewsets.ModelViewSet):
         queryset = ReleasePlan.objects.filter(project='MDL').order_by(
             "-created_time") if type == 'MDL' else ReleasePlan.objects.exclude(project='MDL').order_by("-created_time")
         # 2. 基于前端选择框过滤
-        filter_option_value = eval(request.query_params.get("optionValue"))
+        filter_option_value = eval(request.query_params.get("optionValue") or "{}")
         for field, value in filter_option_value.items():
             # 只取出值存在的查询参数过滤
             if field == 'status' and value:

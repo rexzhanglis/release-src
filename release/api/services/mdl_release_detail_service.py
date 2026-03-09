@@ -224,10 +224,40 @@ class MdlReleaseDetailService(ReleaseDetailService):
         res = SshClient(ip=ip, username=username, password=password).send_cmd(cmd)
         return res[0].strip() if res else ''
 
+    def _resolve_log_file(self, install_dir, consul_files, ssh_client):
+        """
+        从目标机器上的配置文件中解析实际日志文件路径。
+        配置文件是 JSON，找 feeder_handler_log.LogFiles[].FileName 中不含 .trace. 的 .log 文件。
+        找不到则回退到 install_dir/../logs/feeder_handler.log。
+        """
+        import json
+        cfg_file = consul_files.split(",")[0].strip() if consul_files else None
+        if cfg_file:
+            cfg_path = "{}/{}".format(install_dir, cfg_file)
+            try:
+                res = ssh_client.send_cmd("cat {}".format(cfg_path))
+                content = "\n".join(res).strip()
+                cfg = json.loads(content)
+                # 找所有 LogFiles 里的 FileName
+                for key, val in cfg.items():
+                    if isinstance(val, dict) and "LogFiles" in val:
+                        for lf in val["LogFiles"]:
+                            fname = lf.get("FileName", "")
+                            if fname.endswith(".log") and ".trace." not in fname:
+                                # FileName 通常是相对路径如 ../logs/feeder_handlerTEST.log
+                                # 基于 install_dir 解析绝对路径
+                                import posixpath
+                                abs_path = posixpath.normpath(posixpath.join(install_dir, fname))
+                                return abs_path
+            except Exception as e:
+                self.release_detail.set_log("解析配置文件日志路径失败：{}，使用默认路径".format(e), self.user)
+        # 回退：install_dir/../logs/feeder_handler.log
+        base = "/".join(install_dir.rstrip("/").split("/")[:-1])
+        return "{}/logs/feeder_handler.log".format(base)
+
     def _get_upgrade_log(self, server, service_name):
         """
         获取最近1分钟内的日志
-        grep $(date '+%Y-%m-%d') feeder_handler.log | awk -v dt="$(date '+%Y-%m-%d %T' -d '-2 minutes')" -F, '$1 > dt'
         """
         mdl_server = MdlServer.objects.select_related('host').get(host__fqdn=server, service_name=service_name)
         ip = mdl_server.host.ip
@@ -236,12 +266,14 @@ class MdlReleaseDetailService(ReleaseDetailService):
         username = Constance.get_value("ansible_ssh_user")
         password = Constance.get_value("ansible_ssh_pass")
         install_dir = mdl_server.install_dir
-        executable = getattr(mdl_server, 'executable', None) or "feeder_handler"
-        log_file = "/".join(install_dir.split("/")[:-1]) + "/logs/{}.log".format(executable)
+        ssh = SshClient(ip=ip, username=username, password=password)
+        log_file = self._resolve_log_file(install_dir, mdl_server.consul_files, ssh)
+        log_name = log_file.split("/")[-1]
+        self.release_detail.set_log("读取日志文件：{}".format(log_file), self.user)
         cmd = """grep -a $(date '+%Y-%m-%d') {} | awk -v dt="$(date '+%Y-%m-%d %T' -d '-1 minutes')" -F, '$1 > dt'""".format(
             log_file)
-        res = SshClient(ip=ip, username=username, password=password).send_cmd(cmd)
-        self.release_detail.log = self.release_detail.log + "{}.log信息如下：\n".format(executable) + "\n".join(res)
+        res = ssh.send_cmd(cmd)
+        self.release_detail.log = self.release_detail.log + "{}信息如下：\n".format(log_name) + "\n".join(res)
         self.release_detail.save()
 
     def deploy_config(self, module):

@@ -61,6 +61,32 @@
       >
         批量重启（{{ checkedHosts.length }} 台）
       </el-button>
+
+      <!-- 列选择器 -->
+      <el-popover
+        placement="bottom-end"
+        width="200"
+        trigger="click"
+        style="margin-left:auto"
+      >
+        <div>
+          <div style="font-size:12px;color:#909399;margin-bottom:8px;font-weight:600">显示列（拖拽可排序）</div>
+          <div
+            v-for="col in columnDefs"
+            :key="col.key"
+            class="col-item"
+            draggable="true"
+            @dragstart="dragStart(col)"
+            @dragover.prevent="dragOver(col)"
+            @drop="dragDrop(col)"
+            @dragend="dragEnd"
+          >
+            <i class="el-icon-rank col-drag-handle" />
+            <el-checkbox v-model="col.visible" :disabled="col.fixed">{{ col.label }}</el-checkbox>
+          </div>
+        </div>
+        <el-button slot="reference" size="small" icon="el-icon-set-up">列设置</el-button>
+      </el-popover>
     </div>
 
     <!-- 物理机表格 -->
@@ -72,30 +98,75 @@
       style="width:100%;margin-top:12px"
       @sort-change="handleSortChange"
       @selection-change="checkedHosts = $event"
+      @row-click="handleRowClick"
     >
       <el-table-column type="selection" width="40" />
-      <el-table-column prop="fqdn" label="FQDN" min-width="180" show-overflow-tooltip sortable="custom">
+      <template v-for="col in visibleColumns">
+        <el-table-column
+          v-if="col.key === 'fqdn'"
+          :key="col.key"
+          prop="fqdn"
+          label="FQDN"
+          min-width="180"
+          show-overflow-tooltip
+          sortable="custom"
+        >
+          <template slot-scope="{ row }">
+            <router-link
+              :to="{ name: 'mdlServerDetail', params: { id: row.id }, query: { type: 'host' } }"
+              style="color:#409eff;text-decoration:none"
+              @click.native.stop
+            >
+              {{ row.fqdn }}
+            </router-link>
+          </template>
+        </el-table-column>
+        <el-table-column
+          v-else-if="col.key === 'ip'"
+          :key="col.key"
+          prop="ip"
+          label="IP 地址"
+          width="140"
+          sortable="custom"
+        />
+        <el-table-column
+          v-else-if="col.key === 'user'"
+          :key="col.key"
+          prop="user"
+          label="SSH 用户"
+          width="100"
+        />
+        <el-table-column
+          v-else-if="col.key === 'remote_python'"
+          :key="col.key"
+          prop="remote_python"
+          label="远端 Python"
+          min-width="160"
+          show-overflow-tooltip
+        />
+        <el-table-column
+          v-else-if="col.key === 'service_count'"
+          :key="col.key"
+          label="服务实例数"
+          width="100"
+          align="center"
+        >
+          <template slot-scope="{ row }">
+            <el-badge :value="row.service_count || 0" type="primary" />
+          </template>
+        </el-table-column>
+        <el-table-column
+          v-else-if="col.key === 'created_time'"
+          :key="col.key"
+          label="创建时间"
+          width="155"
+        >
+          <template slot-scope="{ row }">{{ row.created_time | formatTime }}</template>
+        </el-table-column>
+      </template>
+      <el-table-column label="操作" width="220" align="center" fixed="right">
         <template slot-scope="{ row }">
-          <router-link
-            :to="{ name: 'mdlServerDetail', params: { id: row.id }, query: { type: 'host' } }"
-            style="color:#409eff;text-decoration:none"
-          >
-            {{ row.fqdn }}
-          </router-link>
-        </template>
-      </el-table-column>
-      <el-table-column prop="ip" label="IP 地址" width="140" sortable="custom" />
-      <el-table-column prop="user" label="SSH 用户" width="100" />
-      <el-table-column label="服务实例数" width="100" align="center">
-        <template slot-scope="{ row }">
-          <el-badge :value="row.service_count || 0" type="primary" />
-        </template>
-      </el-table-column>
-      <el-table-column label="创建时间" width="155">
-        <template slot-scope="{ row }">{{ row.created_time | formatTime }}</template>
-      </el-table-column>
-      <el-table-column label="操作" width="200" align="center" fixed="right">
-        <template slot-scope="{ row }">
+          <el-button size="mini" type="text" icon="el-icon-view" @click.stop="handleViewDetail(row)">详情</el-button>
           <el-button size="mini" type="text" icon="el-icon-edit" @click.stop="handleEdit(row)">编辑</el-button>
           <el-button
             size="mini" type="text" icon="el-icon-s-grid" style="color:#409eff"
@@ -131,6 +202,51 @@
       @success="fetchHosts"
     />
 
+    <!-- 详情弹窗 -->
+    <el-dialog
+      title="机器详情"
+      :visible.sync="showDetail"
+      width="520px"
+      :close-on-click-modal="false"
+    >
+      <template v-if="detailHost">
+        <el-descriptions :column="1" border size="small">
+          <el-descriptions-item label="FQDN">{{ detailHost.fqdn }}</el-descriptions-item>
+          <el-descriptions-item label="IP 地址">{{ detailHost.ip }}</el-descriptions-item>
+          <el-descriptions-item label="SSH 用户">{{ detailHost.user }}</el-descriptions-item>
+          <el-descriptions-item label="远端 Python">{{ detailHost.remote_python }}</el-descriptions-item>
+          <el-descriptions-item label="服务实例数">{{ detailHost.service_count || 0 }}</el-descriptions-item>
+          <el-descriptions-item label="创建时间">{{ detailHost.created_time | formatTime }}</el-descriptions-item>
+          <el-descriptions-item label="更新时间">{{ detailHost.updated_time | formatTime }}</el-descriptions-item>
+        </el-descriptions>
+        <div v-if="detailHost.services && detailHost.services.length" style="margin-top:16px">
+          <div style="font-size:13px;font-weight:600;color:#303133;margin-bottom:8px">服务实例列表</div>
+          <el-table :data="detailHost.services" size="mini" border>
+            <el-table-column prop="service_name" label="服务名" min-width="120" show-overflow-tooltip />
+            <el-table-column prop="install_dir" label="安装目录" min-width="140" show-overflow-tooltip />
+            <el-table-column prop="init_status" label="初始化状态" width="90" align="center">
+              <template slot-scope="{ row }">
+                <el-tag
+                  :type="row.init_status === 'success' ? 'success' : row.init_status === 'failed' ? 'danger' : 'info'"
+                  size="mini" effect="plain"
+                >{{ row.init_status || '-' }}</el-tag>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </template>
+      <div slot="footer">
+        <el-button size="small" @click="showDetail = false">关闭</el-button>
+        <el-button size="small" type="primary" @click="handleEditFromDetail">编辑</el-button>
+        <el-button
+          size="small"
+          type="success"
+          icon="el-icon-s-grid"
+          @click="goManageServices"
+        >管理服务</el-button>
+      </div>
+    </el-dialog>
+
     <!-- 标签管理弹窗 -->
     <el-dialog
       title="标签管理"
@@ -164,6 +280,7 @@
         <el-button @click="showLabelMgr = false">关闭</el-button>
       </div>
     </el-dialog>
+
     <!-- 跨机器批量重启弹窗 -->
     <el-dialog
       title="跨机器批量重启"
@@ -231,6 +348,27 @@
 import { getHosts, deleteHost, getLabels, createLabel, deleteLabel, batchRestartHosts } from '@/api/mdlServer'
 import HostFormModal from './components/HostFormModal'
 
+const DEFAULT_COLUMNS = [
+  { key: 'fqdn', label: 'FQDN', visible: true, fixed: true },
+  { key: 'ip', label: 'IP 地址', visible: true, fixed: false },
+  { key: 'user', label: 'SSH 用户', visible: true, fixed: false },
+  { key: 'remote_python', label: '远端 Python', visible: false, fixed: false },
+  { key: 'service_count', label: '服务实例数', visible: true, fixed: false },
+  { key: 'created_time', label: '创建时间', visible: true, fixed: false },
+]
+
+const STORAGE_KEY = 'serverMgmt_columns'
+
+function loadColumns() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY))
+    if (Array.isArray(saved) && saved.length === DEFAULT_COLUMNS.length) {
+      return saved.map((s, i) => ({ ...DEFAULT_COLUMNS.find(d => d.key === s.key) || DEFAULT_COLUMNS[i], visible: s.visible }))
+    }
+  } catch {}
+  return DEFAULT_COLUMNS.map(c => ({ ...c }))
+}
+
 export default {
   name: 'ServerManagement',
   components: { HostFormModal },
@@ -261,7 +399,26 @@ export default {
       batchRestartConsulPull: false,
       batchRestartLoading: false,
       batchRestartResult: null,
+      // 详情弹窗
+      showDetail: false,
+      detailHost: null,
+      // 列管理
+      columnDefs: loadColumns(),
+      dragSrcKey: null,
     }
+  },
+  computed: {
+    visibleColumns() {
+      return this.columnDefs.filter(c => c.visible)
+    },
+  },
+  watch: {
+    columnDefs: {
+      deep: true,
+      handler(val) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(val.map(c => ({ key: c.key, visible: c.visible }))))
+      },
+    },
   },
   created() {
     this.fetchHosts()
@@ -327,6 +484,27 @@ export default {
     handleEdit(row) {
       this.currentHost = row
       this.showForm = true
+    },
+
+    handleViewDetail(row) {
+      this.detailHost = row
+      this.showDetail = true
+    },
+
+    handleRowClick(row) {
+      this.handleViewDetail(row)
+    },
+
+    handleEditFromDetail() {
+      this.showDetail = false
+      this.currentHost = this.detailHost
+      this.showForm = true
+    },
+
+    goManageServices() {
+      if (!this.detailHost) return
+      this.showDetail = false
+      this.$router.push({ name: 'mdlServerDetail', params: { id: this.detailHost.id }, query: { type: 'host' } })
     },
 
     async handleDelete(row) {
@@ -403,6 +581,24 @@ export default {
         this.$message.error(msg)
       }
     },
+
+    // 列拖拽排序
+    dragStart(col) {
+      this.dragSrcKey = col.key
+    },
+    dragOver(col) {
+      if (col.key === this.dragSrcKey) return
+      const cols = this.columnDefs
+      const srcIdx = cols.findIndex(c => c.key === this.dragSrcKey)
+      const dstIdx = cols.findIndex(c => c.key === col.key)
+      if (srcIdx === -1 || dstIdx === -1) return
+      const moved = cols.splice(srcIdx, 1)[0]
+      cols.splice(dstIdx, 0, moved)
+    },
+    dragEnd() {
+      this.dragSrcKey = null
+    },
+    dragDrop() {},
   },
 }
 </script>
@@ -420,5 +616,22 @@ export default {
 .empty-placeholder {
   text-align: center;
   padding: 40px 0;
+}
+.col-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 0;
+  cursor: grab;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.col-item:hover {
+  background: #f5f7fa;
+}
+.col-drag-handle {
+  color: #c0c4cc;
+  margin-right: 6px;
+  font-size: 14px;
+  cursor: grab;
 }
 </style>

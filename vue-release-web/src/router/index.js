@@ -95,6 +95,12 @@ export const constantRoutes = [
         meta: { title: '消息链路查询', icon: 'dashboard' }
       },
       {
+        path: 'exchange_map',
+        name: 'mdlExchangeMap',
+        component: () => import('@/views/mdl/exchangeMap'),
+        meta: { title: '交易所IP映射', icon: 'dashboard' }
+      },
+      {
         path: 'servers/:id',
         name: 'mdlServerDetail',
         component: () => import('@/views/mdl/serverDetail'),

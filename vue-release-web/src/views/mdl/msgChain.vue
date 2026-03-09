@@ -117,6 +117,7 @@
           >
             <div class="node-type-tag">{{ nodeTypeLabel(node) }}</div>
             <div class="node-name" :title="node.instance">{{ nodeDisplayName(node) }}</div>
+            <div v-if="node.exchange" class="node-exchange">{{ node.exchange }}</div>
             <div class="node-ip">{{ node.id }}</div>
             <div v-if="node.services && node.services.length" class="node-services">
               <el-tag
@@ -419,10 +420,13 @@ export default {
     },
 
     nodeDisplayName(node) {
-      // 优先显示实例名（去掉过长的 IP 后缀部分），兜底用 id
+      // 外部源：优先用交易所名称，其次裸 ip:port
+      if (node.type === 'external') {
+        return node.exchange || node.id
+      }
+      // 内部节点：优先显示实例名（去掉过长的 IP 后缀部分），兜底用 id
       const inst = node.instance || ''
       if (!inst || inst === node.id) return node.id
-      // 截断超长名称
       return inst.length > 20 ? inst.slice(0, 18) + '…' : inst
     },
   },
@@ -509,8 +513,12 @@ export default {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   margin-bottom: 2px;
 }
+.node-exchange {
+  font-size: 12px; font-weight: 600; color: #f56c6c;
+  margin-bottom: 2px;
+}
 .node-ip {
-  font-family: monospace; font-size: 10px; color: #606266;
+  font-family: monospace; font-size: 10px; color: #909399;
   word-break: break-all;
 }
 .node-services { margin-top: 4px; }

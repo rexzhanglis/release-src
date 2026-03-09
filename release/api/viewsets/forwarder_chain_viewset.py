@@ -8,7 +8,7 @@
 import concurrent.futures
 
 import requests as http_requests
-from django.db import close_old_connections
+from django.db import close_old_connections, connection
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework import viewsets, status as drf_status
@@ -115,8 +115,15 @@ EXCHANGE_IP_MAP = {
 def lookup_exchange(ip_or_ip_port):
     """
     根据 IP 或 'IP:port' 字符串查找交易所名称，找不到返回 None。
+    先尝试精确的 IP:port 匹配（同一机器不同端口可能接不同交易所），再回退到纯 IP 匹配。
     """
-    ip = ip_or_ip_port.split(':')[0] if ':' in ip_or_ip_port else ip_or_ip_port
+    if ':' in ip_or_ip_port:
+        exact = EXCHANGE_IP_MAP.get(ip_or_ip_port)
+        if exact:
+            return exact
+        ip = ip_or_ip_port.split(':')[0]
+    else:
+        ip = ip_or_ip_port
     return EXCHANGE_IP_MAP.get(ip)
 
 
@@ -611,7 +618,7 @@ def fetch_heartbeat(ip, fqdn, port):
 
 
 def search_heartbeat(service_id, msg_id):
-    close_old_connections()
+    connection.close()  # 强制关闭旧连接，防止 build_chain 长查询后连接超时断开
     servers = list(MdlServer.objects.filter(init_status='ready').select_related('host'))
     if not servers:
         return [], []
@@ -778,8 +785,6 @@ class ForwarderChainViewSet(viewsets.ViewSet):
         # build_chain 包含大量 ORM 查询，search_heartbeat 在主线程预查端口后子线程只做 HTTP
         # 先串行执行 build_chain（主线程 ORM），再并发 fetch heartbeat（子线程纯 HTTP）
         chain_result = build_chain(service_id, msg_id)
-        # build_chain 耗时较长，之后 MySQL 连接可能已超时，主动关闭旧连接
-        close_old_connections()
         live_results, unreachable = search_heartbeat(service_id, msg_id)
 
         service_label = SERVICE_ID_MAP.get(service_id, '') if service_id else ''

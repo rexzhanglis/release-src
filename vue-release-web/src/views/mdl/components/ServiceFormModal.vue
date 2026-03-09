@@ -8,6 +8,34 @@
     @close="resetForm"
   >
     <el-form ref="form" :model="form" :rules="rules" label-width="110px" size="small">
+      <el-form-item v-if="!isEdit" label="从Git配置导入">
+        <el-input-group style="display:flex;gap:6px">
+          <el-select
+            v-model="gitImportId"
+            :placeholder="configInstances.length ? '选择配置实例自动填写字段' : '暂无数据，可点右侧同步'"
+            clearable
+            filterable
+            size="small"
+            style="flex:1"
+            @change="handleGitImport"
+          >
+            <el-option
+              v-for="inst in configInstances"
+              :key="inst.id"
+              :label="`${inst.service_type_name} / ${inst.name}`"
+              :value="inst.id"
+            />
+          </el-select>
+          <el-button
+            size="small"
+            :loading="gitSyncing"
+            :icon="gitSyncing ? '' : 'el-icon-refresh'"
+            @click="handleSyncGit"
+            style="flex-shrink:0"
+          >{{ gitSyncing ? '同步中' : '同步Git' }}</el-button>
+        </el-input-group>
+        <div style="font-size:11px;color:#909399;margin-top:4px">选择后自动填写安装目录、Consul 地址等字段，可按需修改</div>
+      </el-form-item>
       <el-form-item v-if="!isEdit && existingServices.length" label="从已有复制">
         <el-select
           v-model="copySourceId"
@@ -64,6 +92,7 @@
 
 <script>
 import { createMdlServer, updateMdlServer } from '@/api/mdlServer'
+import { getConfigInstances, syncFromGitlab } from '@/api/configMgmt'
 
 export default {
   name: 'ServiceFormModal',
@@ -78,6 +107,9 @@ export default {
     return {
       saving: false,
       copySourceId: null,
+      gitImportId: null,
+      configInstances: [],
+      gitSyncing: false,
       form: {
         service_name: '',
         role_name: '',
@@ -128,9 +160,52 @@ export default {
   methods: {
     onOpen() {
       this.copySourceId = null
+      this.gitImportId = null
+      if (!this.isEdit) {
+        getConfigInstances({ page_size: 1000 }).then(res => {
+          this.configInstances = (res.data.results || res.data || []).filter(i => i.host_ip)
+        }).catch(() => {})
+      }
+    },
+    handleSyncGit() {
+      this.gitSyncing = true
+      syncFromGitlab().then(() => {
+        return getConfigInstances({ page_size: 1000 })
+      }).then(res => {
+        this.configInstances = (res.data.results || res.data || []).filter(i => i.host_ip)
+        this.$message.success('同步成功')
+      }).catch(e => {
+        this.$message.error('同步失败：' + (e.response && e.response.data && e.response.data.message || e.message || '未知错误'))
+      }).finally(() => {
+        this.gitSyncing = false
+      })
+    },
+    handleGitImport(id) {
+      if (!id) return
+      const inst = this.configInstances.find(i => i.id === id)
+      if (!inst) return
+      // 从实例名推断服务名：取 service_type 最后一段 + 编号，如 forward → mdl-forward
+      const stParts = (inst.service_type_name || '').split('/')
+      const stLast = stParts[stParts.length - 1] || ''
+      const suggestedServiceName = inst.service_name || (stLast ? 'mdl-' + stLast : '')
+      // install_dir: 若已有则用，否则根据 service_type 末段推断
+      const installDir = inst.install_dir || (stLast ? `/datayes/${stLast}/bin` : '')
+      const backupsDir = inst.backups_dir || (stLast ? `/datayes/${stLast}/backup` : '')
+      this.form = {
+        ...this.form,
+        service_name: suggestedServiceName,
+        role_name: stLast,
+        install_dir: installDir,
+        backups_dir: backupsDir,
+        consul_space: inst.consul_space || '',
+        consul_files: inst.consul_files || 'feeder_handler.cfg',
+        executable: inst.consul_files && inst.consul_files.includes('receiver') ? 'feeder_receiver' : 'feeder_handler',
+      }
+      this.$nextTick(() => { this.$refs.form && this.$refs.form.clearValidate() })
     },
     resetForm() {
       this.copySourceId = null
+      this.gitImportId = null
       this.form = {
         service_name: '',
         role_name: '',

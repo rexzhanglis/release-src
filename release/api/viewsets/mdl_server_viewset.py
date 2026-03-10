@@ -391,22 +391,36 @@ class HostViewSet(viewsets.ModelViewSet):
                             'ok': False, 'matched': [], 'output': f'未找到匹配 {service_pattern}* 的服务'
                         }
 
+                    # 批量重启
+                    svc_list = ' '.join(matched)
+
                     # consul_pull
                     if do_consul_pull:
                         ready_srv = host.services.filter(init_status='ready').first()
                         if ready_srv:
                             pull_script = ready_srv.install_dir.rstrip('/') + '/consul_pull.py'
-                            remote_python = host.remote_python or '/usr/bin/python3'
                             consul_token = ready_srv.consul_token or ''
-                            pull_env = f'CONSUL_TOKEN={consul_token} {remote_python} {pull_script}'
+                            # 优先用 python3，fallback 到 host.remote_python，再 fallback 到 python
+                            pull_env = (
+                                f'CONSUL_TOKEN={consul_token} '
+                                f'$(command -v python3 || command -v {host.remote_python or "python"}) '
+                                f'{pull_script}'
+                            )
                             pull_proc = _sp.run(
                                 ['ansible', 'release', '-i', hosts_path, '-m', 'shell', '-a', pull_env],
                                 stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
                             )
-                            output_parts.append(f'[consul_pull]\n{pull_proc.stdout or pull_proc.stderr}')
-
-                    # 批量重启
-                    svc_list = ' '.join(matched)
+                            pull_output = pull_proc.stdout or pull_proc.stderr
+                            output_parts.append(f'[consul_pull]\n{pull_output}')
+                            if pull_proc.returncode != 0:
+                                _write_op_log(
+                                    host=host, service_name=svc_list, action='consul_pull',
+                                    operator=operator, status='failed', detail='\n'.join(output_parts),
+                                )
+                                return {
+                                    'host_id': host.id, 'fqdn': host.fqdn, 'ip': host.ip,
+                                    'ok': False, 'matched': matched, 'output': '\n'.join(output_parts)
+                                }
                     rst_proc = _sp.run(
                         ['ansible', 'release', '-i', hosts_path, '-m', 'shell',
                          '-a', f'systemctl restart {svc_list}', '--become'],

@@ -407,7 +407,7 @@ class HostViewSet(viewsets.ModelViewSet):
                                 f'{pull_script}'
                             )
                             pull_proc = _sp.run(
-                                ['ansible', 'release', '-i', hosts_path, '-m', 'shell', '-a', pull_env],
+                                ['ansible', 'release', '-i', hosts_path, '-m', 'shell', '-a', pull_env, '--become'],
                                 stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
                             )
                             pull_output = pull_proc.stdout or pull_proc.stderr

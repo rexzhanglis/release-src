@@ -846,7 +846,7 @@ export default {
         const res = await controlSystemdService(serverId, { service: svc.name, action })
         if (res.data && res.data.ok) {
           this.$message.success(action + ' 成功')
-          if (this.isHostMode) { await this.fetchHostSystemd() } else { await this.fetchServicesForId(serverId) }
+          if (this.isHostMode) { await this.fetchHostSystemd(true) } else { await this.handleRefreshNow(serverId) }
           this.fetchLogs()
         } else {
           this.$message.error(action + ' 失败：' + ((res.data && res.data.output) || ''))
@@ -877,7 +877,7 @@ export default {
         if (res.data && res.data.ok) {
           this.$message.success('重启成功')
           this.restartDialog.visible = false
-          if (this.isHostMode) { await this.fetchHostSystemd() } else { await this.fetchServicesForId(id) }
+          if (this.isHostMode) { await this.fetchHostSystemd(true) } else { await this.handleRefreshNow(id) }
         } else {
           this.$message.error('重启失败：' + ((res.data && res.data.output) || ''))
         }
@@ -907,7 +907,7 @@ export default {
         if (res.data && res.data.ok) {
           this.$message.success('批量重启成功')
           this.batchRestartDialog.visible = false
-          if (this.isHostMode) { await this.fetchHostSystemd() } else { await this.fetchServicesForId(id) }
+          if (this.isHostMode) { await this.fetchHostSystemd(true) } else { await this.handleRefreshNow(id) }
         } else {
           this.$message.error('批量重启失败：' + ((res.data && res.data.output) || ''))
         }
@@ -957,7 +957,7 @@ export default {
         if (res.data && res.data.ok) {
           this.$message.success(op === 'create' ? '创建成功' : '保存成功')
           this.editDialog.visible = false
-          if (this.isHostMode) { await this.fetchHostSystemd() } else { await this.fetchServicesForId(id) }
+          if (this.isHostMode) { await this.fetchHostSystemd(true) } else { await this.handleRefreshNow(id) }
         } else {
           this.$message.error((op === 'create' ? '创建' : '保存') + '失败：' + ((res.data && res.data.output) || ''))
         }
@@ -980,7 +980,7 @@ export default {
         const res = await manageSystemdService(serverId, { op: 'delete', name: svc.name })
         if (res.data && res.data.ok) {
           this.$message.success('删除成功')
-          if (this.isHostMode) { await this.fetchHostSystemd() } else { await this.fetchServicesForId(serverId) }
+          if (this.isHostMode) { await this.fetchHostSystemd(true) } else { await this.handleRefreshNow(serverId) }
         } else {
           this.$message.error('删除失败：' + ((res.data && res.data.output) || ''))
         }
@@ -1009,7 +1009,8 @@ export default {
         if (res.data && res.data.ok) {
           this.$message.success('重命名成功')
           this.renameDialog.visible = false
-          if (this.isHostMode) { await this.fetchHostSystemd() } else { await this.fetchServicesForId(id) }
+          // 重命名后必须实时刷新，缓存中还是旧文件名
+          if (this.isHostMode) { await this.fetchHostSystemd(true) } else { await this.handleRefreshNow(id) }
         } else {
           this.$message.error('重命名失败：' + ((res.data && res.data.output) || ''))
         }

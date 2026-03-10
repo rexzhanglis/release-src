@@ -285,35 +285,73 @@
     <el-dialog
       title="跨机器批量重启"
       :visible.sync="showBatchRestart"
-      width="600px"
+      width="700px"
       :close-on-click-modal="false"
-      @close="batchRestartResult = null"
+      @close="resetBatchRestart"
     >
-      <template v-if="!batchRestartResult">
+      <!-- 第一阶段：输入前缀，查询服务 -->
+      <template v-if="batchRestartStep === 'query'">
         <div style="margin-bottom:12px;font-size:13px;color:#606266">
-          已选中 <strong>{{ checkedHosts.length }}</strong> 台机器，将在每台机器上重启前缀匹配的 systemd 服务。
+          已选中 <strong>{{ checkedHosts.length }}</strong> 台机器，输入前缀后查询各机器上的服务，再选择需要重启的服务。
         </div>
-        <el-form label-width="110px" size="small">
+        <el-form label-width="100px" size="small">
           <el-form-item label="服务名前缀">
             <el-input v-model="batchRestartPattern" placeholder="如 mdl-" style="width:240px" />
             <div style="font-size:11px;color:#909399;margin-top:4px">匹配每台机器上以此前缀开头的所有 systemd 服务</div>
-          </el-form-item>
-          <el-form-item label="拉取配置">
-            <el-checkbox v-model="batchRestartConsulPull">重启前先执行 consul_pull.py 拉取最新配置</el-checkbox>
           </el-form-item>
         </el-form>
         <div style="background:#f5f7fa;border-radius:4px;padding:8px 12px;font-size:12px;color:#909399">
           <div v-for="h in checkedHosts" :key="h.id">{{ h.fqdn }} ({{ h.ip }})</div>
         </div>
       </template>
-      <template v-else>
+
+      <!-- 第二阶段：展示服务列表，用户勾选 -->
+      <template v-else-if="batchRestartStep === 'select'">
+        <div style="margin-bottom:10px;font-size:13px;color:#606266">
+          请勾选每台机器上需要重启的服务，然后点击「确认重启」。
+        </div>
+        <div
+          v-for="item in batchServiceList"
+          :key="item.host_id"
+          style="margin-bottom:14px;border:1px solid #ebeef5;border-radius:4px;overflow:hidden"
+        >
+          <div style="background:#f5f7fa;padding:6px 12px;font-size:12px;font-weight:600;color:#303133;display:flex;align-items:center;justify-content:space-between">
+            <span>{{ item.fqdn }} <span style="color:#909399;font-weight:400">({{ item.ip }})</span></span>
+            <span v-if="!item.ok" style="color:#f56c6c;font-size:11px">{{ item.error }}</span>
+            <el-checkbox
+              v-else
+              :indeterminate="batchSelectedServices[item.host_id] && batchSelectedServices[item.host_id].length > 0 && batchSelectedServices[item.host_id].length < item.services.length"
+              :value="batchSelectedServices[item.host_id] && batchSelectedServices[item.host_id].length === item.services.length"
+              @change="val => toggleAllServices(item, val)"
+              style="margin-left:auto"
+            >全选</el-checkbox>
+          </div>
+          <div v-if="item.ok && item.services.length" style="padding:8px 12px">
+            <el-checkbox-group :value="batchSelectedServices[item.host_id] || []" @input="val => setHostServices(item.host_id, val)">
+              <el-checkbox
+                v-for="svc in item.services"
+                :key="svc"
+                :label="svc"
+                style="display:block;margin:2px 0;font-family:monospace;font-size:12px"
+              >{{ svc }}</el-checkbox>
+            </el-checkbox-group>
+          </div>
+          <div v-else-if="item.ok" style="padding:8px 12px;font-size:12px;color:#909399">无匹配服务</div>
+        </div>
+        <div style="margin-top:4px;padding:8px 4px;border-top:1px solid #ebeef5">
+          <el-checkbox v-model="batchRestartConsulPull" size="small">重启前先执行 consul_pull.py 拉取最新配置</el-checkbox>
+        </div>
+      </template>
+
+      <!-- 第三阶段：执行结果 -->
+      <template v-else-if="batchRestartStep === 'result'">
         <div style="margin-bottom:8px;font-size:13px">
           完成：{{ batchRestartResult.ok_count }}/{{ batchRestartResult.total }} 台成功
         </div>
-        <el-table :data="batchRestartResult.results" size="mini" border max-height="320">
+        <el-table :data="batchRestartResult.results" size="mini" border max-height="380">
           <el-table-column prop="fqdn" label="机器" min-width="140" show-overflow-tooltip />
           <el-table-column prop="ip" label="IP" width="130" />
-          <el-table-column label="匹配服务" min-width="160" show-overflow-tooltip>
+          <el-table-column label="重启服务" min-width="180" show-overflow-tooltip>
             <template slot-scope="{ row }">
               <span style="font-family:monospace;font-size:11px">{{ (row.matched || []).join(', ') || '-' }}</span>
             </template>
@@ -330,22 +368,39 @@
           </el-table-column>
         </el-table>
       </template>
+
       <span slot="footer">
-        <el-button size="small" @click="showBatchRestart = false">{{ batchRestartResult ? '关闭' : '取消' }}</el-button>
-        <el-button
-          v-if="!batchRestartResult"
-          size="small" type="warning"
-          :loading="batchRestartLoading"
-          :disabled="!batchRestartPattern"
-          @click="handleBatchRestart"
-        >确认批量重启</el-button>
+        <!-- query 阶段 -->
+        <template v-if="batchRestartStep === 'query'">
+          <el-button size="small" @click="showBatchRestart = false">取消</el-button>
+          <el-button
+            size="small" type="primary"
+            :loading="batchListLoading"
+            :disabled="!batchRestartPattern"
+            @click="handleQueryServices"
+          >查询服务</el-button>
+        </template>
+        <!-- select 阶段 -->
+        <template v-else-if="batchRestartStep === 'select'">
+          <el-button size="small" @click="batchRestartStep = 'query'">返回</el-button>
+          <el-button
+            size="small" type="warning"
+            :loading="batchRestartLoading"
+            :disabled="!hasSelectedServices"
+            @click="handleBatchRestart"
+          >确认重启</el-button>
+        </template>
+        <!-- result 阶段 -->
+        <template v-else>
+          <el-button size="small" @click="showBatchRestart = false">关闭</el-button>
+        </template>
       </span>
     </el-dialog>
   </div>
 </template>
 
 <script>
-import { getHosts, deleteHost, getLabels, createLabel, deleteLabel, batchRestartHosts } from '@/api/mdlServer'
+import { getHosts, deleteHost, getLabels, createLabel, deleteLabel, batchListServices, batchRestartHosts } from '@/api/mdlServer'
 import HostFormModal from './components/HostFormModal'
 
 const DEFAULT_COLUMNS = [
@@ -399,6 +454,11 @@ export default {
       batchRestartConsulPull: false,
       batchRestartLoading: false,
       batchRestartResult: null,
+      // 三阶段：query（输入前缀）→ select（选择服务）→ result（执行结果）
+      batchRestartStep: 'query',
+      batchServiceList: [],     // [{host_id, fqdn, ip, services:[...], ok, error}]
+      batchSelectedServices: {}, // {host_id: [checked_service, ...]}
+      batchListLoading: false,
       // 详情弹窗
       showDetail: false,
       detailHost: null,
@@ -410,6 +470,9 @@ export default {
   computed: {
     visibleColumns() {
       return this.columnDefs.filter(c => c.visible)
+    },
+    hasSelectedServices() {
+      return Object.values(this.batchSelectedServices).some(svcs => svcs && svcs.length > 0)
     },
   },
   watch: {
@@ -548,16 +611,60 @@ export default {
       }
     },
 
-    async handleBatchRestart() {
+    resetBatchRestart() {
+      this.batchRestartStep = 'query'
+      this.batchServiceList = []
+      this.batchSelectedServices = {}
+      this.batchRestartResult = null
+    },
+
+    async handleQueryServices() {
       if (!this.batchRestartPattern) return
-      this.batchRestartLoading = true
+      this.batchListLoading = true
       try {
-        const res = await batchRestartHosts({
+        const res = await batchListServices({
           host_ids: this.checkedHosts.map(h => h.id),
           service_pattern: this.batchRestartPattern,
+        })
+        this.batchServiceList = res.data.results || []
+        // 默认全选所有服务
+        const selected = {}
+        this.batchServiceList.forEach(item => {
+          selected[item.host_id] = [...(item.services || [])]
+        })
+        this.batchSelectedServices = selected
+        this.batchRestartStep = 'select'
+      } catch (e) {
+        const msg = (e.response && e.response.data && e.response.data.message) || e.message || '查询失败'
+        this.$message.error(msg)
+      } finally {
+        this.batchListLoading = false
+      }
+    },
+
+    toggleAllServices(item, val) {
+      this.$set(this.batchSelectedServices, item.host_id, val ? [...item.services] : [])
+    },
+
+    setHostServices(hostId, val) {
+      this.$set(this.batchSelectedServices, hostId, val)
+    },
+
+    async handleBatchRestart() {
+      this.batchRestartLoading = true
+      try {
+        // 构建 per_host_services，只传用户勾选的服务
+        const perHostServices = {}
+        Object.entries(this.batchSelectedServices).forEach(([hostId, svcs]) => {
+          if (svcs && svcs.length) perHostServices[hostId] = svcs
+        })
+        const res = await batchRestartHosts({
+          host_ids: this.checkedHosts.map(h => h.id),
+          per_host_services: perHostServices,
           consul_pull: this.batchRestartConsulPull,
         })
         this.batchRestartResult = res.data
+        this.batchRestartStep = 'result'
       } catch (e) {
         const msg = (e.response && e.response.data && e.response.data.message) || e.message || '操作失败'
         this.$message.error(msg)

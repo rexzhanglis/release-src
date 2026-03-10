@@ -239,25 +239,109 @@ class HostViewSet(viewsets.ModelViewSet):
             return Response({'code': 404, 'message': '任务不存在'},
                             status=drf_status.HTTP_404_NOT_FOUND)
 
-    @action(detail=False, methods=['post'], url_path='batch_restart')
-    def batch_restart(self, request):
+    @action(detail=False, methods=['post'], url_path='batch_list_services')
+    def batch_list_services(self, request):
         """
-        跨多台机器批量重启 systemd 服务。
+        查询多台机器上匹配前缀的 systemd 服务列表（不执行重启）。
         请求体：
-          host_ids: [1, 2, 3]          # 目标机器 ID 列表
-          service_pattern: "mdl-"      # 服务名前缀匹配（精确前缀）
-          consul_pull: false           # 是否先拉取配置
-        返回：每台机器的执行结果
+          host_ids: [1, 2, 3]
+          service_pattern: "mdl-"
+        返回：每台机器的服务列表
         """
         host_ids = request.data.get('host_ids') or []
         service_pattern = (request.data.get('service_pattern') or '').strip()
-        do_consul_pull = request.data.get('consul_pull', False) in (True, 'true', '1', 1)
 
         if not host_ids:
             return Response({'code': 400, 'message': 'host_ids 不能为空'},
                             status=drf_status.HTTP_400_BAD_REQUEST)
         if not service_pattern:
             return Response({'code': 400, 'message': 'service_pattern 不能为空'},
+                            status=drf_status.HTTP_400_BAD_REQUEST)
+
+        try:
+            ssh_pass = ''
+            try:
+                ssh_pass = Constance.get_value('ansible_ssh_pass') or ''
+            except Exception:
+                pass
+            if not ssh_pass:
+                ssh_pass = os.environ.get('ANSIBLE_SSH_PASS', '')
+
+            hosts = Host.objects.filter(id__in=host_ids)
+
+            import subprocess as _sp
+            import tempfile as _tf
+            import concurrent.futures
+
+            def _list_one(host):
+                ssh_user = os.environ.get('ANSIBLE_SSH_USER', '') or host.user or 'root'
+                tmpdir = _tf.mkdtemp(prefix='mdl_list_svc_')
+                try:
+                    hosts_path = os.path.join(tmpdir, 'hosts')
+                    with open(hosts_path, 'w') as f:
+                        f.write(f"release ansible_ssh_host={host.ip} "
+                                f"ansible_ssh_user={ssh_user} "
+                                f"ansible_ssh_pass={ssh_pass}\n")
+                    env = os.environ.copy()
+                    env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
+
+                    list_proc = _sp.run(
+                        ['ansible', 'release', '-i', hosts_path, '-m', 'shell',
+                         '-a', f'systemctl list-units --type=service --all --no-pager --no-legend | awk \'{{print $1}}\' | grep \'^{service_pattern}\''],
+                        stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
+                    )
+                    services = [s.strip() for s in list_proc.stdout.splitlines()
+                                if s.strip() and s.strip().endswith('.service')]
+                    return {
+                        'host_id': host.id, 'fqdn': host.fqdn, 'ip': host.ip,
+                        'services': services,
+                        'ok': True,
+                        'error': '' if services else f'未找到匹配 {service_pattern}* 的服务',
+                    }
+                except Exception as ex:
+                    return {
+                        'host_id': host.id, 'fqdn': host.fqdn, 'ip': host.ip,
+                        'services': [], 'ok': False, 'error': str(ex),
+                    }
+                finally:
+                    shutil.rmtree(tmpdir, ignore_errors=True)
+
+            results = []
+            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
+                futures = {pool.submit(_list_one, h): h for h in hosts}
+                for f in concurrent.futures.as_completed(futures):
+                    results.append(f.result())
+
+            return ApiResponse(data={'results': results})
+
+        except Exception as e:
+            return Response({'code': 500, 'message': str(e)},
+                            status=drf_status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['post'], url_path='batch_restart')
+    def batch_restart(self, request):
+        """
+        跨多台机器批量重启 systemd 服务。
+        请求体：
+          host_ids: [1, 2, 3]          # 目标机器 ID 列表
+          service_pattern: "mdl-"      # 服务名前缀匹配（精确前缀），与 per_host_services 二选一
+          per_host_services: {         # 指定每台机器重启哪些服务（优先级高于 service_pattern）
+            "1": ["mdl-a.service", "mdl-b.service"],
+            "2": ["mdl-c.service"]
+          }
+          consul_pull: false           # 是否先拉取配置
+        返回：每台机器的执行结果
+        """
+        host_ids = request.data.get('host_ids') or []
+        service_pattern = (request.data.get('service_pattern') or '').strip()
+        per_host_services = request.data.get('per_host_services') or {}  # {str(host_id): [svc, ...]}
+        do_consul_pull = request.data.get('consul_pull', False) in (True, 'true', '1', 1)
+
+        if not host_ids:
+            return Response({'code': 400, 'message': 'host_ids 不能为空'},
+                            status=drf_status.HTTP_400_BAD_REQUEST)
+        if not per_host_services and not service_pattern:
+            return Response({'code': 400, 'message': 'service_pattern 或 per_host_services 不能同时为空'},
                             status=drf_status.HTTP_400_BAD_REQUEST)
 
         try:
@@ -289,13 +373,17 @@ class HostViewSet(viewsets.ModelViewSet):
                     env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
                     output_parts = []
 
-                    # 获取匹配的 service 列表
-                    list_proc = _sp.run(
-                        ['ansible', 'release', '-i', hosts_path, '-m', 'shell',
-                         '-a', f'systemctl list-units --type=service --all --no-pager --no-legend | awk \'{{print $1}}\' | grep \'^{service_pattern}\''],
-                        stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
-                    )
-                    matched = [s.strip() for s in list_proc.stdout.splitlines() if s.strip() and s.strip().endswith('.service')]
+                    # 优先使用调用方传入的服务列表，否则通过前缀 grep 查询
+                    explicit_services = per_host_services.get(str(host.id)) or []
+                    if explicit_services:
+                        matched = [s for s in explicit_services if s]
+                    else:
+                        list_proc = _sp.run(
+                            ['ansible', 'release', '-i', hosts_path, '-m', 'shell',
+                             '-a', f'systemctl list-units --type=service --all --no-pager --no-legend | awk \'{{print $1}}\' | grep \'^{service_pattern}\''],
+                            stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
+                        )
+                        matched = [s.strip() for s in list_proc.stdout.splitlines() if s.strip() and s.strip().endswith('.service')]
 
                     if not matched:
                         return {

@@ -959,16 +959,18 @@ class MdlServerViewSet(viewsets.ModelViewSet):
             )
             shutil.rmtree(tmpdir, ignore_errors=True)
 
-            if proc.returncode != 0:
+            # 提取 >> 后的实际内容（ansible shell 模块输出格式：host | SUCCESS >> \n<content>）
+            raw = proc.stdout
+            idx = raw.find('>>')
+            content = raw[idx + 2:].lstrip('\r\n ') if idx != -1 else raw.strip()
+
+            # returncode != 0 且内容为空才认为失败（stderr 可能只有 paramiko warnings）
+            if proc.returncode != 0 and not content:
                 return Response(
-                    {'code': 404, 'message': f'文件不存在或读取失败：{proc.stderr}'},
+                    {'code': 404, 'message': f'文件不存在：{service_path}'},
                     status=drf_status.HTTP_404_NOT_FOUND
                 )
 
-            # 提取 >> 后的实际内容
-            raw = proc.stdout
-            idx = raw.find('>>')
-            content = raw[idx + 2:].lstrip('\r\n ') if idx != -1 else raw
             return ApiResponse(data={'name': name, 'content': content, 'path': service_path})
 
         except Exception as e:
@@ -1045,7 +1047,6 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 )
 
             if op in ('create', 'update'):
-                # 将 content 写入本地临时文件，再用 copy 模块上传
                 local_file = os.path.join(tmpdir, name)
                 with open(local_file, 'w', encoding='utf-8') as fp:
                     fp.write(content)
@@ -1064,13 +1065,18 @@ class MdlServerViewSet(viewsets.ModelViewSet):
             elif op == 'rename':
                 new_path = f'{service_dir}/{new_name}'
                 proc = _run_shell(
+                    f'systemctl stop {name} 2>/dev/null || true && '
+                    f'systemctl disable {name} 2>/dev/null || true && '
                     f'cp {service_path} {new_path} && '
-                    f'systemctl disable {name} 2>/dev/null || true; '
-                    f'rm -f {service_path}'
+                    f'rm -f {service_path} && '
+                    f'systemctl daemon-reload && '
+                    f'systemctl enable {new_name} 2>/dev/null || true && '
+                    f'systemctl start {new_name}'
                 )
 
-            # daemon-reload
-            _run_shell('systemctl daemon-reload')
+            if op != 'rename':
+                # rename 已在命令中包含 daemon-reload，其他操作单独执行
+                _run_shell('systemctl daemon-reload')
             shutil.rmtree(tmpdir, ignore_errors=True)
 
             ok = proc.returncode == 0

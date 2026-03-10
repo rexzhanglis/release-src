@@ -139,7 +139,6 @@ export default {
     },
     resetForm() {
       this.copySourceId = null
-      this.gitImportId = null
       this.form = {
         service_name: '',
         role_name: '',

@@ -92,7 +92,7 @@
 
 <script>
 import { createMdlServer, updateMdlServer } from '@/api/mdlServer'
-import { getConfigInstances, syncFromGitlab } from '@/api/configMgmt'
+import { getConfigInstances, syncFromGitlab, getConfigDefaults } from '@/api/configMgmt'
 
 export default {
   name: 'ServiceFormModal',
@@ -165,6 +165,11 @@ export default {
         getConfigInstances({ page_size: 1000 }).then(res => {
           this.configInstances = (res.data.results || res.data || []).filter(i => i.host_ip)
         }).catch(() => {})
+        getConfigDefaults().then(res => {
+          const d = res.data || {}
+          if (d.consul_token && !this.form.consul_token) this.form.consul_token = d.consul_token
+          if (d.config_git_url && !this.form.config_git_url) this.form.config_git_url = d.config_git_url
+        }).catch(() => {})
       }
     },
     handleSyncGit() {
@@ -199,7 +204,7 @@ export default {
         backups_dir: backupsDir,
         consul_space: inst.consul_space || '',
         consul_files: inst.consul_files || 'feeder_handler.cfg',
-        executable: inst.consul_files && inst.consul_files.includes('receiver') ? 'feeder_receiver' : 'feeder_handler',
+        executable: (inst.service_type_name || '').toLowerCase().includes('receiver') ? 'feeder_receiver' : 'feeder_handler',
       }
       this.$nextTick(() => { this.$refs.form && this.$refs.form.clearValidate() })
     },

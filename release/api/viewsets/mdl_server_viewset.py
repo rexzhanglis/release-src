@@ -121,8 +121,8 @@ class HostViewSet(viewsets.ModelViewSet):
         """
         host = self.get_object()
         try:
-            ssh_user = (request.data.get('ssh_user') or '').strip() or host.user or 'root'
-            ssh_pass = (request.data.get('ssh_pass') or '').strip()
+            ssh_user = os.environ.get('INIT_SSH_USER', '').strip() or host.user or 'root'
+            ssh_pass = os.environ.get('INIT_SSH_PASS', '').strip()
             if not ssh_pass:
                 try:
                     ssh_pass = Constance.get_value('ansible_ssh_pass') or ''
@@ -587,8 +587,8 @@ class MdlServerViewSet(viewsets.ModelViewSet):
         """
         server = self.get_object()
         try:
-            ssh_user = (request.data.get('ssh_user') or '').strip() or os.environ.get('ANSIBLE_SSH_USER', '') or server.host.user or 'root'
-            ssh_pass = request.data.get('ssh_pass', '').strip()
+            ssh_user = os.environ.get('INIT_SSH_USER', '').strip() or os.environ.get('ANSIBLE_SSH_USER', '') or server.host.user or 'root'
+            ssh_pass = os.environ.get('INIT_SSH_PASS', '').strip()
             if not ssh_pass:
                 try:
                     ssh_pass = Constance.get_value('ansible_ssh_pass') or ''
@@ -778,8 +778,8 @@ class MdlServerViewSet(viewsets.ModelViewSet):
 
         if do_refresh:
             try:
-                ssh_pass = Constance.get_value('ansible_ssh_pass') or os.environ.get('ANSIBLE_SSH_PASS', '')
-                ssh_user = Constance.get_value('ansible_ssh_user') or os.environ.get('ANSIBLE_SSH_USER', '') or server.host.user or 'root'
+                ssh_pass = os.environ.get('INIT_SSH_PASS', '').strip() or Constance.get_value('ansible_ssh_pass') or os.environ.get('ANSIBLE_SSH_PASS', '')
+                ssh_user = os.environ.get('INIT_SSH_USER', '').strip() or os.environ.get('ANSIBLE_SSH_USER', '') or server.host.user or 'root'
                 ansible_env = os.environ.copy()
                 ansible_env['ANSIBLE_HOST_KEY_CHECKING'] = 'False'
                 _, services, error = _fetch_systemd_for_host(server.host, ssh_user, ssh_pass, ansible_env)

@@ -77,6 +77,16 @@ export function syncFromGitlab() {
 }
 
 /**
+ * 获取配置默认值（consul_token、config_git_url）
+ */
+export function getConfigDefaults() {
+  return request({
+    url: '/config-mgmt/sync/defaults/',
+    method: 'get'
+  })
+}
+
+/**
  * 提交选中配置到 GitLab
  * @param {Object} data - { config_ids: [...], message: 'commit message' }
  */

@@ -1,0 +1,14 @@
+# 转发机列表示例文件，复制为 servers.txt 后按实际情况修改
+# 格式：IP  或  IP:fqdn  或  IP:fqdn:port
+# 以 # 开头的行为注释，空行忽略
+
+# IDC 转发机
+10.121.21.236:mdl-fwd-idc-01
+10.121.21.240:mdl-fwd-idc-02
+10.121.21.243:mdl-fwd-idc-03
+
+# IDC 接收机（feeder_receiver 同样支持 heartbeat 接口）
+10.22.240.43:mdl-recv-idc-01
+
+# 自定义端口示例（该机器 HttpPort 配置为 9080）
+# 10.121.21.250:mdl-fwd-special:9080

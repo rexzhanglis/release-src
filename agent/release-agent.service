@@ -1,0 +1,27 @@
+[Unit]
+Description=Release Agent - MDL Heartbeat Collector
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nobody
+Group=nobody
+
+WorkingDirectory=/opt/release-agent
+ExecStart=/usr/bin/python3 /opt/release-agent/agent.py
+Environment=AGENT_CONFIG=/opt/release-agent/config.ini
+
+# 异常退出后自动重启，最多连续失败 5 次
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+# 标准输出写入 systemd journal（journalctl -u release-agent -f 查看）
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=release-agent
+
+[Install]
+WantedBy=multi-user.target

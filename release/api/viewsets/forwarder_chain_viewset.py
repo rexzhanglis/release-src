@@ -715,14 +715,37 @@ def search_heartbeat(service_id, msg_id):
     if not servers:
         return [], []
 
-    # 在主线程预先查好每台服务器的 HttpPort，避免子线程中查库引发 OperationalError
-    # 同一 IP 只查一次（MdlServer 表可能有重复记录）
+    # 一次性批量加载所有 feeder_handler.cfg，构建 ip -> HttpPort 映射，避免循环内逐个查库
+    ip_to_http_port = {}
+    all_handler_cfs = ConfigFile.objects.filter(
+        filename='feeder_handler.cfg'
+    ).select_related('instance').only('content', 'instance__host_ip', 'instance__name')
+    for cf in all_handler_cfs:
+        cf_ip = _cf_ip(cf)
+        if not cf_ip or cf_ip in ip_to_http_port:
+            continue
+        content = cf.content or {}
+        port = HEARTBEAT_PORT
+        fh = content.get('feeder_handler', {})
+        if isinstance(fh, dict) and 'HttpPort' in fh:
+            try:
+                port = int(fh['HttpPort'])
+            except (ValueError, TypeError):
+                pass
+        elif 'HttpPort' in content:
+            try:
+                port = int(content['HttpPort'])
+            except (ValueError, TypeError):
+                pass
+        ip_to_http_port[cf_ip] = port
+
     seen_ips = set()
     server_infos = []
     for s in servers:
         if s.host.ip not in seen_ips:
             seen_ips.add(s.host.ip)
-            server_infos.append((s.host.ip, s.host.fqdn, _get_http_port(s.host.ip)))
+            port = ip_to_http_port.get(s.host.ip, HEARTBEAT_PORT)
+            server_infos.append((s.host.ip, s.host.fqdn, port))
 
     results = []
     unreachable = []

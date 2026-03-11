@@ -78,107 +78,192 @@
             <span class="legend-dot" style="background:#e6a23c"></span><span class="legend-text">接收机</span>
             <span class="legend-dot" style="background:#409eff"></span><span class="legend-text">转发机</span>
             <span class="legend-dot" style="background:#67c23a"></span><span class="legend-text">聚合转发</span>
+            <el-tooltip content="滚轮缩放 · 拖空白区域平移 · 拖节点移动" placement="top">
+              <i class="el-icon-info" style="color:#909399;cursor:help" />
+            </el-tooltip>
+            <el-button size="mini" icon="el-icon-refresh-left" @click="resetView">重置视图</el-button>
           </span>
         </div>
 
         <div v-if="topoLayers.length === 0" class="empty-tip">
           未找到包含该消息的配置
         </div>
-        <div v-else class="topo-scroll">
-        <div ref="topoWrap" class="topo-wrap" :style="{ height: svgHeight + 'px', width: svgWidth + 'px' }">
-          <!-- SVG 画连线 -->
-          <svg
-            v-if="svgReady"
-            class="topo-svg"
-            :width="svgWidth"
-            :height="svgHeight"
-          >
-            <defs>
-              <marker id="arrow-blue"  markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-                <path d="M0,0 L0,6 L8,3 z" fill="#409eff" />
-              </marker>
-              <marker id="arrow-gray"  markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-                <path d="M0,0 L0,6 L8,3 z" fill="#c0c4cc" />
-              </marker>
-            </defs>
-            <path
-              v-for="(edge, i) in svgEdges"
-              :key="i"
-              :d="edge.d"
-              :stroke="edge.color"
-              stroke-width="1.5"
-              fill="none"
-              :marker-end="edge.markerEnd"
-              opacity="0.7"
-            />
-          </svg>
-
-          <!-- 节点（绝对定位） -->
+        <div
+          v-else
+          ref="topoScroll"
+          class="topo-scroll"
+          @wheel.prevent="onWheel"
+          @mousedown="onCanvasMousedown"
+          @mousemove="onMousemove"
+          @mouseup="onMouseup"
+          @mouseleave="onMouseup"
+        >
           <div
-            v-for="node in layoutNodes"
-            :key="node.id"
-            class="topo-node"
-            :class="[nodeClass(node), { 'node-has-live': liveByForwarder[node.id] && liveByForwarder[node.id].length > 0 }]"
-            :style="{ left: node.x + 'px', top: node.y + 'px', width: NODE_W + 'px' }"
-            @mouseenter="hoveredNode = node.id"
-            @mouseleave="hoveredNode = null"
+            ref="topoWrap"
+            class="topo-wrap"
+            :style="wrapStyle"
           >
-            <div class="node-type-tag">{{ nodeTypeLabel(node) }}</div>
-            <div class="node-name" :title="node.instance">{{ nodeDisplayName(node) }}</div>
-            <div v-if="node.exchange" class="node-exchange">{{ node.exchange }}</div>
-            <div class="node-ip">{{ node.id }}</div>
-            <div v-if="node.services && node.services.length" class="node-services">
-              <el-tag
-                v-for="s in node.services" :key="s.msg_label"
-                size="mini" type="primary" style="margin:1px 1px 0 0"
-              >{{ s.msg_label }}</el-tag>
-            </div>
-            <!-- 下游客户端气泡 -->
-            <el-popover
-              v-if="liveByForwarder[node.id] && liveByForwarder[node.id].length > 0"
-              placement="right"
-              width="380"
-              trigger="click"
-              popper-class="client-popover"
+            <!-- SVG 画连线 -->
+            <svg
+              v-if="svgReady"
+              class="topo-svg"
+              :width="svgWidth"
+              :height="svgHeight"
             >
-              <div class="client-pop-header">
-                <i class="el-icon-connection" style="color:#67c23a" />
-                {{ node.id }} 的下游客户端（{{ liveByForwarder[node.id].length }} 个）
+              <defs>
+                <marker id="arrow-blue"  markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                  <path d="M0,0 L0,6 L8,3 z" fill="#409eff" />
+                </marker>
+                <marker id="arrow-gray"  markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                  <path d="M0,0 L0,6 L8,3 z" fill="#c0c4cc" />
+                </marker>
+                <marker id="arrow-blue-sel" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                  <path d="M0,0 L0,6 L8,3 z" fill="#1565c0" />
+                </marker>
+                <marker id="arrow-gray-sel" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                  <path d="M0,0 L0,6 L8,3 z" fill="#606266" />
+                </marker>
+              </defs>
+              <!-- 透明宽热区 -->
+              <path
+                v-for="(edge, i) in svgEdges"
+                :key="'hit-' + i"
+                :d="edge.d"
+                stroke="transparent"
+                stroke-width="12"
+                fill="none"
+                style="cursor:pointer"
+                @click="selectEdge(edge, i)"
+              />
+              <!-- 实际连线 -->
+              <path
+                v-for="(edge, i) in svgEdges"
+                :key="i"
+                :d="edge.d"
+                :stroke="selectedEdgeIndex === i ? edge.selectedColor : edge.color"
+                :stroke-width="selectedEdgeIndex === i ? 3 : 1.5"
+                fill="none"
+                :marker-end="selectedEdgeIndex === i ? edge.selectedMarkerEnd : edge.markerEnd"
+                :opacity="selectedEdgeIndex === i ? 1 : 0.7"
+                style="pointer-events:none"
+              />
+              <!-- 选中边信息气泡 -->
+              <g v-if="selectedEdgeIndex !== null && svgEdges[selectedEdgeIndex]">
+                <rect
+                  :x="svgEdges[selectedEdgeIndex].mx - 90"
+                  :y="svgEdges[selectedEdgeIndex].my - 32"
+                  width="180" height="54"
+                  rx="6" ry="6"
+                  fill="white"
+                  stroke="#1565c0"
+                  stroke-width="1.5"
+                />
+                <text
+                  :x="svgEdges[selectedEdgeIndex].mx"
+                  :y="svgEdges[selectedEdgeIndex].my - 14"
+                  text-anchor="middle"
+                  font-size="11"
+                  fill="#303133"
+                  font-weight="600"
+                >{{ svgEdges[selectedEdgeIndex].fromLabel }}</text>
+                <text
+                  :x="svgEdges[selectedEdgeIndex].mx"
+                  :y="svgEdges[selectedEdgeIndex].my + 2"
+                  text-anchor="middle"
+                  font-size="10"
+                  fill="#909399"
+                >↓</text>
+                <text
+                  :x="svgEdges[selectedEdgeIndex].mx"
+                  :y="svgEdges[selectedEdgeIndex].my + 16"
+                  text-anchor="middle"
+                  font-size="11"
+                  fill="#303133"
+                  font-weight="600"
+                >{{ svgEdges[selectedEdgeIndex].toLabel }}</text>
+                <circle
+                  :cx="svgEdges[selectedEdgeIndex].mx + 84"
+                  :cy="svgEdges[selectedEdgeIndex].my - 26"
+                  r="8"
+                  fill="#f56c6c"
+                  style="cursor:pointer"
+                  @click="selectedEdgeIndex = null"
+                />
+                <text
+                  :x="svgEdges[selectedEdgeIndex].mx + 84"
+                  :y="svgEdges[selectedEdgeIndex].my - 22"
+                  text-anchor="middle"
+                  font-size="10"
+                  fill="white"
+                  style="pointer-events:none"
+                >✕</text>
+              </g>
+            </svg>
+
+            <!-- 节点（绝对定位） -->
+            <div
+              v-for="node in layoutNodes"
+              :key="node.id"
+              class="topo-node"
+              :class="[nodeClass(node), { 'node-has-live': liveByForwarder[node.id] && liveByForwarder[node.id].length > 0 }]"
+              :style="{ left: node.x + 'px', top: node.y + 'px', width: NODE_W + 'px' }"
+              @mousedown.stop="onNodeMousedown($event, node)"
+            >
+              <div class="node-type-tag">{{ nodeTypeLabel(node) }}</div>
+              <div class="node-name" :title="node.instance">{{ nodeDisplayName(node) }}</div>
+              <div v-if="node.exchange" class="node-exchange">{{ node.exchange }}</div>
+              <div class="node-ip">{{ node.id }}</div>
+              <div v-if="node.services && node.services.length" class="node-services">
+                <el-tag
+                  v-for="s in node.services" :key="s.msg_label"
+                  size="mini" type="primary" style="margin:1px 1px 0 0"
+                >{{ s.msg_label }}</el-tag>
               </div>
-              <el-table
-                :data="liveByForwarder[node.id]"
-                border size="mini"
-                max-height="280"
-                style="margin-top:8px"
+              <!-- 下游客户端气泡 -->
+              <el-popover
+                v-if="liveByForwarder[node.id] && liveByForwarder[node.id].length > 0"
+                placement="right"
+                width="380"
+                trigger="click"
+                popper-class="client-popover"
               >
-                <el-table-column label="客户端地址" min-width="140" show-overflow-tooltip>
-                  <template slot-scope="{ row }">
-                    <span class="mono">{{ row.client_address }}</span>
-                  </template>
-                </el-table-column>
-                <el-table-column label="连接时间" width="100">
-                  <template slot-scope="{ row }">
-                    <span style="font-size:10px;color:#909399">{{ row.start_date }}<br>{{ row.start_time }}</span>
-                  </template>
-                </el-table-column>
-                <el-table-column label="积压" width="60" align="right">
-                  <template slot-scope="{ row }">
-                    <span :style="{ color: row.pending_bytes > 0 ? '#e6a23c' : '#67c23a', fontSize: '11px' }">
-                      {{ row.pending_bytes }}
-                    </span>
-                  </template>
-                </el-table-column>
-              </el-table>
-              <div slot="reference" class="node-client-badge">
-                <i class="el-icon-user" />
-                {{ liveByForwarder[node.id].length }}
-              </div>
-            </el-popover>
+                <div class="client-pop-header">
+                  <i class="el-icon-connection" style="color:#67c23a" />
+                  {{ node.id }} 的下游客户端（{{ liveByForwarder[node.id].length }} 个）
+                </div>
+                <el-table
+                  :data="liveByForwarder[node.id]"
+                  border size="mini"
+                  max-height="280"
+                  style="margin-top:8px"
+                >
+                  <el-table-column label="客户端地址" min-width="140" show-overflow-tooltip>
+                    <template slot-scope="{ row }">
+                      <span class="mono">{{ row.client_address }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="连接时间" width="100">
+                    <template slot-scope="{ row }">
+                      <span style="font-size:10px;color:#909399">{{ row.start_date }}<br>{{ row.start_time }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="积压" width="60" align="right">
+                    <template slot-scope="{ row }">
+                      <span :style="{ color: row.pending_bytes > 0 ? '#e6a23c' : '#67c23a', fontSize: '11px' }">
+                        {{ row.pending_bytes }}
+                      </span>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <div slot="reference" class="node-client-badge" @mousedown.stop>
+                  <i class="el-icon-user" />
+                  {{ liveByForwarder[node.id].length }}
+                </div>
+              </el-popover>
+            </div>
           </div>
         </div>
-        </div>
       </el-card>
-
 
       <!-- 无法连接 -->
       <el-card v-if="result.unreachable.length > 0" shadow="never">
@@ -213,6 +298,8 @@ const NODE_H = 80    // 节点高度（估算，含 services tag 时更高）
 const COL_GAP = 80   // 列间距
 const ROW_GAP = 20   // 行间距
 const PAD = 20       // 画布 padding
+const ZOOM_MIN = 0.3
+const ZOOM_MAX = 2.5
 
 export default {
   name: 'MsgChain',
@@ -227,12 +314,35 @@ export default {
       queryLabel: '',
       svgReady: false,
       hoveredNode: null,
+      selectedEdgeIndex: null,
       rebuilding: false,
       indexStatus: null,
       _statusTimer: null,
+
+      // 画布变换状态
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+
+      // 节点手动偏移 { nodeId: { dx, dy } }
+      nodeOverrides: {},
+
+      // 拖拽状态
+      _drag: null,   // { type: 'canvas' | 'node', nodeId?, startX, startY, origPanX?, origPanY?, origDx?, origDy? }
     }
   },
   computed: {
+    wrapStyle() {
+      return {
+        position: 'relative',
+        width: this.svgWidth + 'px',
+        height: this.svgHeight + 'px',
+        transform: `translate(${this.panX}px, ${this.panY}px) scale(${this.zoom})`,
+        transformOrigin: '0 0',
+        willChange: 'transform',
+      }
+    },
+
     /** Kahn 拓扑分层，返回 [[nodeId, ...], ...] */
     topoLayers() {
       if (!this.result || !this.result.nodes) return []
@@ -273,32 +383,33 @@ export default {
       return layers
     },
 
-    /** 计算每个节点的绝对坐标 */
+    /** 计算每个节点的绝对坐标（含手动偏移） */
     layoutNodes() {
       if (!this.result || !this.topoLayers.length) return []
       const nodes = this.result.nodes
       const result = []
-      const nodeH = NODE_H + 16  // 预留 services tag 空间
+      const nodeH = NODE_H + 16
 
       this.topoLayers.forEach((layer, col) => {
-        const x = PAD + col * (NODE_W + COL_GAP)
+        const baseX = PAD + col * (NODE_W + COL_GAP)
         const totalH = layer.length * nodeH + (layer.length - 1) * ROW_GAP
         const startY = PAD + Math.max(0, (this.svgHeight - totalH) / 2 - PAD)
 
         layer.forEach((id, row) => {
           const node = nodes[id]
           if (!node) return
+          const override = this.nodeOverrides[id] || { dx: 0, dy: 0 }
           result.push({
             ...node,
-            x,
-            y: startY + row * (nodeH + ROW_GAP),
+            x: baseX + override.dx,
+            y: startY + row * (nodeH + ROW_GAP) + override.dy,
           })
         })
       })
       return result
     },
 
-    /** nodeId -> {x, y, cx, cy} 中心点查找表 */
+    /** nodeId -> {x, y, cx, cy} */
     nodePositionMap() {
       const map = {}
       const nodeH = NODE_H + 16
@@ -315,17 +426,17 @@ export default {
 
     svgWidth() {
       if (!this.topoLayers.length) return 600
-      return PAD * 2 + this.topoLayers.length * (NODE_W + COL_GAP) - COL_GAP
+      return PAD * 2 + this.topoLayers.length * (NODE_W + COL_GAP) - COL_GAP + 200
     },
 
     svgHeight() {
       if (!this.topoLayers.length) return 300
       const maxLen = Math.max(...this.topoLayers.map(l => l.length))
       const nodeH = NODE_H + 16
-      return PAD * 2 + maxLen * nodeH + (maxLen - 1) * ROW_GAP
+      return PAD * 2 + maxLen * nodeH + (maxLen - 1) * ROW_GAP + 100
     },
 
-    /** forwarder_ip → live clients 列表 */
+    /** forwarder_ip → live clients */
     liveByForwarder() {
       if (!this.result || !this.result.live) return {}
       const map = {}
@@ -341,13 +452,11 @@ export default {
     svgEdges() {
       if (!this.result || !this.result.edges) return []
       const posMap = this.nodePositionMap
-      const nodeH = NODE_H + 16
       return this.result.edges.map(e => {
         const from = posMap[e.from]
         const to = posMap[e.to]
         if (!from || !to) return null
 
-        // 从 from 节点右侧中心 → to 节点左侧中心
         const x1 = from.x + NODE_W
         const y1 = from.cy
         const x2 = to.x
@@ -356,12 +465,25 @@ export default {
         const cx2 = x2 - (x2 - x1) * 0.45
         const d = `M ${x1} ${y1} C ${cx1} ${y1} ${cx2} ${y2} ${x2} ${y2}`
 
+        // 贝塞尔中点 t=0.5
+        const mx = 0.125*x1 + 0.375*cx1 + 0.375*cx2 + 0.125*x2
+        const my = 0.125*y1 + 0.375*y1  + 0.375*y2  + 0.125*y2
+
         const fromNode = this.result.nodes[e.from]
+        const toNode   = this.result.nodes[e.to]
         const isExternal = fromNode && fromNode.type === 'external'
+        const labelOf = n => (n && n.instance && n.instance !== n.id) ? n.instance : (n ? n.id : '')
+
         return {
-          d,
+          d, mx, my,
+          fromId: e.from, toId: e.to,
+          fromLabel: labelOf(fromNode),
+          toLabel: labelOf(toNode),
+          services: e.services || [],
           color: isExternal ? '#c0c4cc' : '#409eff',
+          selectedColor: isExternal ? '#606266' : '#1565c0',
           markerEnd: isExternal ? 'url(#arrow-gray)' : 'url(#arrow-blue)',
+          selectedMarkerEnd: isExternal ? 'url(#arrow-gray-sel)' : 'url(#arrow-blue-sel)',
         }
       }).filter(Boolean)
     },
@@ -370,6 +492,8 @@ export default {
     result(val) {
       if (val) {
         this.svgReady = false
+        this.selectedEdgeIndex = null
+        this.nodeOverrides = {}
         this.$nextTick(() => { this.svgReady = true })
       }
     },
@@ -391,6 +515,8 @@ export default {
   },
   beforeDestroy() {
     if (this._statusTimer) clearInterval(this._statusTimer)
+    window.removeEventListener('mousemove', this._boundMousemove)
+    window.removeEventListener('mouseup', this._boundMouseup)
   },
   methods: {
     async fetchServices() {
@@ -412,7 +538,6 @@ export default {
       try {
         const res = await rebuildChainIndex()
         this.$message.success(res.data?.message || '索引重建已启动')
-        // 每 3 秒轮询一次状态，直到重建完成
         if (this._statusTimer) clearInterval(this._statusTimer)
         this._statusTimer = setInterval(async () => {
           await this.fetchIndexStatus()
@@ -449,6 +574,85 @@ export default {
       }
     },
 
+    resetView() {
+      this.zoom = 1
+      this.panX = 0
+      this.panY = 0
+      this.nodeOverrides = {}
+    },
+
+    // ── 缩放 ──────────────────────────────────────────────
+    onWheel(e) {
+      const delta = e.deltaY > 0 ? 0.9 : 1.1
+      const newZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, this.zoom * delta))
+
+      // 以鼠标位置为缩放中心
+      const rect = this.$refs.topoScroll.getBoundingClientRect()
+      const mx = e.clientX - rect.left
+      const my = e.clientY - rect.top
+      this.panX = mx - (mx - this.panX) * (newZoom / this.zoom)
+      this.panY = my - (my - this.panY) * (newZoom / this.zoom)
+      this.zoom = newZoom
+    },
+
+    // ── 画布平移 ──────────────────────────────────────────
+    onCanvasMousedown(e) {
+      if (e.button !== 0) return
+      // 若点在节点上，节点自己会 stop，这里只处理空白区域
+      this._drag = {
+        type: 'canvas',
+        startX: e.clientX,
+        startY: e.clientY,
+        origPanX: this.panX,
+        origPanY: this.panY,
+      }
+      this.$refs.topoScroll.style.cursor = 'grabbing'
+    },
+
+    // ── 节点拖拽 ──────────────────────────────────────────
+    onNodeMousedown(e, node) {
+      if (e.button !== 0) return
+      const override = this.nodeOverrides[node.id] || { dx: 0, dy: 0 }
+      this._drag = {
+        type: 'node',
+        nodeId: node.id,
+        startX: e.clientX,
+        startY: e.clientY,
+        origDx: override.dx,
+        origDy: override.dy,
+      }
+      e.currentTarget.style.cursor = 'grabbing'
+    },
+
+    onMousemove(e) {
+      if (!this._drag) return
+      const dx = e.clientX - this._drag.startX
+      const dy = e.clientY - this._drag.startY
+
+      if (this._drag.type === 'canvas') {
+        this.panX = this._drag.origPanX + dx
+        this.panY = this._drag.origPanY + dy
+      } else if (this._drag.type === 'node') {
+        const id = this._drag.nodeId
+        // 节点坐标在缩放空间内，需除以 zoom 转回逻辑坐标
+        this.$set(this.nodeOverrides, id, {
+          dx: this._drag.origDx + dx / this.zoom,
+          dy: this._drag.origDy + dy / this.zoom,
+        })
+      }
+    },
+
+    onMouseup(e) {
+      if (!this._drag) return
+      if (this.$refs.topoScroll) this.$refs.topoScroll.style.cursor = ''
+      this._drag = null
+    },
+
+    // ── 连线选中 ──────────────────────────────────────────
+    selectEdge(edge, index) {
+      this.selectedEdgeIndex = this.selectedEdgeIndex === index ? null : index
+    },
+
     nodeClass(node) {
       return {
         'node-external':   node.type === 'external',
@@ -463,11 +667,7 @@ export default {
     },
 
     nodeDisplayName(node) {
-      // 外部源：优先用交易所名称，其次裸 ip:port
-      if (node.type === 'external') {
-        return node.exchange || node.id
-      }
-      // 内部节点：优先显示实例名（去掉过长的 IP 后缀部分），兜底用 id
+      if (node.type === 'external') return node.exchange || node.id
       const inst = node.instance || ''
       if (!inst || inst === node.id) return node.id
       return inst.length > 20 ? inst.slice(0, 18) + '…' : inst
@@ -494,29 +694,26 @@ export default {
 .mono { font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; }
 
 /* 图例 */
-.legend-dot {
-  width: 10px; height: 10px; border-radius: 50%; display: inline-block;
-}
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .legend-text { font-size: 12px; color: #606266; }
 
-/* 滚动外层 */
+/* 画布容器：固定高度，超出隐藏，捕获鼠标 */
 .topo-scroll {
-  overflow-x: auto;
-  overflow-y: auto;
-  max-height: 600px;
-}
-
-/* 拓扑图容器：相对定位，节点绝对定位 */
-.topo-wrap {
+  overflow: hidden;
+  height: 600px;
+  cursor: grab;
   position: relative;
+  background: #fafafa;
+  border-radius: 4px;
+  user-select: none;
 }
+.topo-scroll:active { cursor: grabbing; }
 
 /* SVG 画在最底层 */
 .topo-svg {
   position: absolute;
   top: 0;
   left: 0;
-  pointer-events: none;
 }
 
 /* 节点 */
@@ -528,15 +725,16 @@ export default {
   background: #fff;
   font-size: 11px;
   box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-  cursor: default;
-  transition: box-shadow 0.15s, transform 0.15s;
+  cursor: grab;
+  transition: box-shadow 0.15s;
   box-sizing: border-box;
 }
 .topo-node:hover {
   box-shadow: 0 3px 10px rgba(0,0,0,0.18);
-  transform: translateY(-1px);
   z-index: 10;
 }
+.topo-node:active { cursor: grabbing; }
+
 .node-external  { border-color: #f56c6c; background: #fef0f0; }
 .node-receiver  { border-color: #e6a23c; background: #fdf6ec; }
 .node-forwarder { border-color: #409eff; background: #ecf5ff; }
@@ -567,12 +765,10 @@ export default {
 }
 .node-services { margin-top: 4px; }
 
-/* 有实时客户端的节点高亮 */
 .node-has-live {
   box-shadow: 0 0 0 2px #67c23a, 0 1px 4px rgba(0,0,0,0.08);
 }
 
-/* 客户端气泡徽章 */
 .node-client-badge {
   display: inline-flex;
   align-items: center;
@@ -587,11 +783,8 @@ export default {
   user-select: none;
   transition: background 0.15s;
 }
-.node-client-badge:hover {
-  background: #4caf50;
-}
+.node-client-badge:hover { background: #4caf50; }
 
-/* Popover 内 header */
 .client-pop-header {
   font-size: 13px;
   font-weight: 600;

@@ -20,10 +20,18 @@
         />
         <el-button type="primary" size="small" icon="el-icon-search"
           :loading="loading" style="margin-left:12px" @click="handleQuery">查询</el-button>
+        <el-button size="small" icon="el-icon-refresh"
+          :loading="rebuilding" style="margin-left:8px" @click="handleRebuildIndex">刷新索引</el-button>
+        <span v-if="indexStatus" class="index-status">
+          <i class="el-icon-time" />
+          索引：{{ indexStatus.total }} 条，最近重建 {{ indexStatus.latest_built_at || '未知' }}
+          <el-tag v-if="indexStatus.is_running" type="warning" size="mini" style="margin-left:4px">重建中</el-tag>
+        </span>
         <span v-if="queryLabel" class="query-label">查询：<b>{{ queryLabel }}</b></span>
       </div>
       <div class="search-tip">
         选 Service ID + 填 Message ID 查询完整转发链路，不选 Service ID 则匹配所有 Service。
+        索引由系统自动维护，配置变更后自动更新；如需立即刷新可点击「刷新索引」。
       </div>
     </el-card>
 
@@ -198,7 +206,7 @@
 </template>
 
 <script>
-import { queryMsgChain, getServices } from '@/api/forwarderChain'
+import { queryMsgChain, getServices, rebuildChainIndex, getChainIndexStatus } from '@/api/forwarderChain'
 
 const NODE_W = 150   // 节点宽度
 const NODE_H = 80    // 节点高度（估算，含 services tag 时更高）
@@ -219,6 +227,9 @@ export default {
       queryLabel: '',
       svgReady: false,
       hoveredNode: null,
+      rebuilding: false,
+      indexStatus: null,
+      _statusTimer: null,
     }
   },
   computed: {
@@ -365,6 +376,7 @@ export default {
   },
   created() {
     this.fetchServices()
+    this.fetchIndexStatus()
     const { msg } = this.$route.query
     if (msg) {
       const parts = msg.split('.')
@@ -377,12 +389,43 @@ export default {
       this.handleQuery()
     }
   },
+  beforeDestroy() {
+    if (this._statusTimer) clearInterval(this._statusTimer)
+  },
   methods: {
     async fetchServices() {
       try {
         const res = await getServices()
         this.serviceList = res.data || []
       } catch {}
+    },
+
+    async fetchIndexStatus() {
+      try {
+        const res = await getChainIndexStatus()
+        this.indexStatus = res.data
+      } catch {}
+    },
+
+    async handleRebuildIndex() {
+      this.rebuilding = true
+      try {
+        const res = await rebuildChainIndex()
+        this.$message.success(res.data?.message || '索引重建已启动')
+        // 每 3 秒轮询一次状态，直到重建完成
+        if (this._statusTimer) clearInterval(this._statusTimer)
+        this._statusTimer = setInterval(async () => {
+          await this.fetchIndexStatus()
+          if (this.indexStatus && !this.indexStatus.is_running) {
+            clearInterval(this._statusTimer)
+            this._statusTimer = null
+            this.rebuilding = false
+          }
+        }, 3000)
+      } catch (e) {
+        this.$message.error('触发失败：' + (e.message || '未知错误'))
+        this.rebuilding = false
+      }
     },
 
     async handleQuery() {
@@ -440,6 +483,7 @@ export default {
 .search-label { font-size: 13px; color: #606266; margin-right: 6px; }
 .search-tip { margin-top: 10px; font-size: 12px; color: #909399; }
 .query-label { margin-left: 16px; font-size: 13px; color: #409eff; }
+.index-status { margin-left: 16px; font-size: 12px; color: #909399; }
 .result-area { margin-top: 4px; }
 .stat-card { text-align: center; padding: 6px 0; }
 .stat-num { font-size: 28px; font-weight: bold; line-height: 1.3; }

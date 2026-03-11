@@ -197,6 +197,24 @@ class ConfigDeployTask(TimestampedModel):
         verbose_name_plural = "配置部署任务"
 
 
+class MsgChainIndex(models.Model):
+    """
+    消息链路索引，缓存 build_chain() 的计算结果。
+    ConfigFile 保存时自动异步重建；服务启动时全量初始化。
+    """
+    msg_key    = models.CharField("消息标识", max_length=20, unique=True)  # 如 '6.53' 或 '53'
+    chain_json = models.JSONField("链路数据")                              # build_chain() 完整返回值
+    built_at   = models.DateTimeField("重建时间", auto_now=True)
+    build_ms   = models.IntegerField("重建耗时(ms)", default=0)
+
+    class Meta:
+        verbose_name = "消息链路索引"
+        verbose_name_plural = "消息链路索引"
+
+    def __str__(self):
+        return f"MsgChainIndex({self.msg_key}) built@{self.built_at:%Y-%m-%d %H:%M}"
+
+
 class MdlOperationLog(models.Model):
     """
     MDL 服务实例 & systemd 操作日志。

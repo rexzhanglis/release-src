@@ -59,7 +59,7 @@ INSTALLED_APPS = [
     'account',
     'const',
     'app',
-    'mdl',
+    'mdl.apps.MdlConfig',
 ]
 
 MIDDLEWARE = [

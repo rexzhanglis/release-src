@@ -553,6 +553,94 @@ def build_chain(service_id, msg_id):
     }
 
 
+def _collect_all_msg_keys():
+    """
+    扫描所有 feeder_handler.cfg 配置内容，收集出现过的所有消息 key。
+    返回 set，元素格式为 'service_id.msg_id'（如 '6.53'）或 'msg_id'（如 '53'，service 未知时）。
+    """
+    keys = set()
+    all_cfs = ConfigFile.objects.filter(filename='feeder_handler.cfg').only('content')
+    for cf in all_cfs:
+        content = cf.content
+        if not content or not isinstance(content, dict):
+            continue
+        for handler_key in ('MSG_FORWARDER', 'TEAMING_HANDLER'):
+            handler = content.get(handler_key, {})
+            if not isinstance(handler, dict):
+                continue
+            for upstream in handler.get('UpStreams', []):
+                for svc in upstream.get('Services', []):
+                    svc_name = svc.get('Name', '')
+                    svc_id = SERVICE_NAME_TO_ID.get(svc_name)
+                    for msg_id in svc.get('Messages', []):
+                        if svc_id is not None:
+                            keys.add(f'{svc_id}.{msg_id}')
+                        else:
+                            keys.add(str(msg_id))
+    return keys
+
+
+def rebuild_chain_index(msg_key):
+    """
+    重建单条消息的链路索引，写入 MsgChainIndex 表。
+    线程安全（update_or_create），可在后台线程中调用。
+    """
+    import time
+    from mdl.models import MsgChainIndex
+
+    parsed = parse_query_msg(msg_key)
+    if parsed is None:
+        return
+    service_id, msg_id = parsed
+
+    t0 = time.monotonic()
+    chain_result = build_chain(service_id, msg_id)
+    elapsed_ms = int((time.monotonic() - t0) * 1000)
+
+    MsgChainIndex.objects.update_or_create(
+        msg_key=msg_key,
+        defaults={
+            'chain_json': chain_result,
+            'build_ms': elapsed_ms,
+        },
+    )
+
+
+def rebuild_all_chain_indexes():
+    """
+    全量重建所有消息链路索引。
+    策略：复用同一次 _build_ip_to_config_map() 加载的数据，避免对每条消息重复查库。
+    用于：服务启动时初始化 / 手动触发刷新。
+    """
+    import time
+    import logging
+    from mdl.models import MsgChainIndex
+
+    logger = logging.getLogger('forwarder_chain')
+    logger.info('[ChainIndex] 开始全量重建消息链路索引...')
+
+    msg_keys = _collect_all_msg_keys()
+    if not msg_keys:
+        logger.warning('[ChainIndex] 未找到任何消息，跳过重建')
+        return 0
+
+    logger.info(f'[ChainIndex] 共发现 {len(msg_keys)} 条消息，开始逐一重建')
+    success, failed = 0, 0
+    t_all = time.monotonic()
+
+    for msg_key in sorted(msg_keys):
+        try:
+            rebuild_chain_index(msg_key)
+            success += 1
+        except Exception as e:
+            logger.error(f'[ChainIndex] 重建 {msg_key} 失败: {e}')
+            failed += 1
+
+    elapsed = time.monotonic() - t_all
+    logger.info(f'[ChainIndex] 全量重建完成: 成功={success} 失败={failed} 耗时={elapsed:.1f}s')
+    return success
+
+
 def parse_subscriptions(sub_str, service_id, msg_id):
     matched = []
     for item in sub_str.split(';'):
@@ -618,7 +706,6 @@ def fetch_heartbeat(ip, fqdn, port):
 
 
 def search_heartbeat(service_id, msg_id):
-    connection.close()  # 强制关闭旧连接，防止 build_chain 长查询后连接超时断开
     # 只查接收机和转发机，其他服务（barcal/dispatcher等）不支持 heartbeat
     HEARTBEAT_EXECUTABLES = ('feeder_receiver', 'feeder_handler')
     servers = list(MdlServer.objects.filter(
@@ -764,6 +851,55 @@ class ForwarderChainViewSet(viewsets.ViewSet):
         ]
         return ApiResponse(data=data)
 
+    @action(detail=False, methods=['post'], url_path='rebuild_index')
+    def rebuild_index(self, request):
+        """
+        POST /mdl-forwarder/chain/rebuild_index/
+        触发全量重建消息链路索引，在后台线程异步执行，立即返回。
+        可通过 GET rebuild_index_status/ 查询重建状态。
+        """
+        import threading
+        from mdl.signals import _rebuild_lock, _rebuild_running
+        import mdl.signals as _sig
+
+        with _rebuild_lock:
+            if _sig._rebuild_running:
+                return ApiResponse(data={'status': 'running', 'message': '索引重建已在进行中，请稍后'})
+            _sig._rebuild_running = True
+
+        def _do_rebuild():
+            try:
+                from django.db import close_old_connections
+                close_old_connections()
+                rebuild_all_chain_indexes()
+            except Exception as e:
+                import logging
+                logging.getLogger('forwarder_chain').error(f'[ChainIndex] 手动重建异常: {e}')
+            finally:
+                with _sig._rebuild_lock:
+                    _sig._rebuild_running = False
+
+        t = threading.Thread(target=_do_rebuild, daemon=True, name='chain-index-manual-rebuild')
+        t.start()
+        return ApiResponse(data={'status': 'started', 'message': '索引重建已启动，后台执行中'})
+
+    @action(detail=False, methods=['get'], url_path='rebuild_index_status')
+    def rebuild_index_status(self, request):
+        """
+        GET /mdl-forwarder/chain/rebuild_index_status/
+        返回当前索引状态：索引条数、最新重建时间、是否正在重建。
+        """
+        import mdl.signals as _sig
+        from mdl.models import MsgChainIndex
+
+        total = MsgChainIndex.objects.count()
+        latest = MsgChainIndex.objects.order_by('-built_at').first()
+        return ApiResponse(data={
+            'total': total,
+            'latest_built_at': latest.built_at.strftime('%Y-%m-%d %H:%M:%S') if latest else None,
+            'is_running': _sig._rebuild_running,
+        })
+
     @action(detail=False, methods=['get'], url_path='services')
     def services(self, request):
         data = [
@@ -787,9 +923,29 @@ class ForwarderChainViewSet(viewsets.ViewSet):
             )
         service_id, msg_id = parsed
 
-        # build_chain 包含大量 ORM 查询，search_heartbeat 在主线程预查端口后子线程只做 HTTP
-        # 先串行执行 build_chain（主线程 ORM），再并发 fetch heartbeat（子线程纯 HTTP）
-        chain_result = build_chain(service_id, msg_id)
+        # 请求开始前关闭已失效的旧连接，防止连接池复用超时断开的连接导致 OperationalError
+        close_old_connections()
+
+        # 优先从索引表读取（毫秒级），未命中时 fallback 到实时计算并写入索引
+        from mdl.models import MsgChainIndex
+        force_rebuild = bool(request.query_params.get('refresh'))
+        chain_result = None
+        if not force_rebuild:
+            idx = MsgChainIndex.objects.filter(msg_key=msg_param).first()
+            if idx:
+                chain_result = idx.chain_json
+        if chain_result is None:
+            chain_result = build_chain(service_id, msg_id)
+            # 写入索引供后续查询使用（不阻塞，出错也不影响当次响应）
+            try:
+                MsgChainIndex.objects.update_or_create(
+                    msg_key=msg_param,
+                    defaults={'chain_json': chain_result, 'build_ms': 0},
+                )
+            except Exception:
+                pass
+
+        # search_heartbeat 实时查询，不缓存
         live_results, unreachable = search_heartbeat(service_id, msg_id)
 
         service_label = SERVICE_ID_MAP.get(service_id, '') if service_id else ''

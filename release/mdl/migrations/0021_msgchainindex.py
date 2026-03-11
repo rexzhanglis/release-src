@@ -5,7 +5,7 @@ import django.utils.timezone
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('mdl', '0019_auto_20260306_1805'),
+        ('mdl', '0020_mdlserver_executable'),
     ]
 
     operations = [

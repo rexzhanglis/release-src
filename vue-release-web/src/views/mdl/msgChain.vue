@@ -78,6 +78,7 @@
             <span class="legend-dot" style="background:#e6a23c"></span><span class="legend-text">接收机</span>
             <span class="legend-dot" style="background:#409eff"></span><span class="legend-text">转发机</span>
             <span class="legend-dot" style="background:#67c23a"></span><span class="legend-text">聚合转发</span>
+            <span class="legend-dot" style="background:#9c27b0"></span><span class="legend-text">上证云</span>
             <el-tooltip content="滚轮缩放 · 拖空白区域平移 · 拖节点移动" placement="top">
               <i class="el-icon-info" style="color:#909399;cursor:help" />
             </el-tooltip>
@@ -210,6 +211,7 @@
               @mousedown.stop="onNodeMousedown($event, node)"
             >
               <div class="node-type-tag">{{ nodeTypeLabel(node) }}</div>
+              <span v-if="node.service_type === 'sse_cloud'" class="node-sse-badge">上证云</span>
               <div class="node-name" :title="node.instance">{{ nodeDisplayName(node) }}</div>
               <div v-if="node.exchange" class="node-exchange">{{ node.exchange }}</div>
               <div class="node-ip">{{ node.id }}</div>
@@ -659,6 +661,7 @@ export default {
         'node-receiver':   node.type === 'receiver',
         'node-forwarder':  node.type === 'forwarder',
         'node-aggregator': node.type === 'aggregator',
+        'node-sse-cloud':  node.service_type === 'sse_cloud',
       }
     },
 
@@ -765,8 +768,28 @@ export default {
 }
 .node-services { margin-top: 4px; }
 
+/* 上证云节点：在原有类型颜色基础上叠加紫色双边框，不覆盖背景 */
+.node-sse-cloud { box-shadow: 0 0 0 2px #9c27b0, 0 1px 4px rgba(0,0,0,0.08); }
+
+/* 上证云角标 */
+.node-sse-badge {
+  display: inline-block;
+  font-size: 9px;
+  color: #fff;
+  background: #9c27b0;
+  border-radius: 3px;
+  padding: 0 4px;
+  margin-left: 4px;
+  vertical-align: middle;
+  line-height: 16px;
+}
+
 .node-has-live {
   box-shadow: 0 0 0 2px #67c23a, 0 1px 4px rgba(0,0,0,0.08);
+}
+/* 上证云 + 有下游客户端：同时显示紫色和绿色双边框 */
+.node-sse-cloud.node-has-live {
+  box-shadow: 0 0 0 2px #9c27b0, 0 0 0 4px #67c23a, 0 1px 4px rgba(0,0,0,0.08);
 }
 
 .node-client-badge {

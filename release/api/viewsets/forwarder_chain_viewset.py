@@ -376,13 +376,14 @@ def build_chain(service_id, msg_id):
     edges = set()  # (from_id, to_id) 去重
     edge_list = []
 
-    def get_or_create_node(node_id, instance_name, node_type, svcs):
+    def get_or_create_node(node_id, instance_name, node_type, svcs, service_type_name=''):
         if node_id not in nodes:
             node = {
                 'id': node_id,
                 'instance': instance_name,
                 'type': node_type,
                 'services': svcs,
+                'service_type': service_type_name,
             }
             if node_type == 'external':
                 exchange = lookup_exchange(node_id)
@@ -395,6 +396,9 @@ def build_chain(service_id, msg_id):
             for s in svcs:
                 if s['msg_label'] not in existing:
                     nodes[node_id]['services'].append(s)
+            # 补充 service_type（首次建节点时可能还不知道）
+            if service_type_name and not nodes[node_id].get('service_type'):
+                nodes[node_id]['service_type'] = service_type_name
         return nodes[node_id]
 
     def add_edge(from_id, to_id, svcs):
@@ -433,7 +437,11 @@ def build_chain(service_id, msg_id):
         if not upstream_entries:
             return
 
-        this_node = get_or_create_node(this_ip, cf.instance.name, this_type, [])
+        try:
+            st_name = cf.instance.service_type.name or ''
+        except Exception:
+            st_name = ''
+        this_node = get_or_create_node(this_ip, cf.instance.name, this_type, [], st_name)
 
         for addr_str, matched_svcs in upstream_entries:
             # 更新本节点的 services
@@ -493,7 +501,11 @@ def build_chain(service_id, msg_id):
                         up_type = 'aggregator'
                     else:
                         up_type = 'forwarder'
-                    get_or_create_node(up_ip_real, upstream_cf.instance.name, up_type, matched_svcs)
+                    try:
+                        up_st_name = upstream_cf.instance.service_type.name or ''
+                    except Exception:
+                        up_st_name = ''
+                    get_or_create_node(up_ip_real, upstream_cf.instance.name, up_type, matched_svcs, up_st_name)
                     add_edge(up_ip_real, this_ip, matched_svcs)
 
                     # 接收机是终点，不再递归
@@ -792,6 +804,7 @@ class ForwarderChainViewSet(viewsets.ViewSet):
         GET /mdl-forwarder/chain/debug_index/?ip=10.21.238.101
         GET /mdl-forwarder/chain/debug_index/?port=9012
         """
+        close_old_connections()
         ip_to_cf, ip_port_to_cf, port_to_cfs, handler_cfs, receiver_ip_set = _build_ip_to_config_map()
 
         filter_ip = request.query_params.get('ip', '').strip()
@@ -915,6 +928,7 @@ class ForwarderChainViewSet(viewsets.ViewSet):
         import mdl.signals as _sig
         from mdl.models import MsgChainIndex
 
+        close_old_connections()
         total = MsgChainIndex.objects.count()
         latest = MsgChainIndex.objects.order_by('-built_at').first()
         return ApiResponse(data={

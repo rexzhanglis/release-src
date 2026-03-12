@@ -38,28 +38,22 @@
     <div v-if="result" class="result-area">
       <!-- 统计 -->
       <el-row :gutter="12" style="margin-bottom:16px">
-        <el-col :span="6">
+        <el-col :span="8">
           <el-card shadow="never" class="stat-card">
             <div class="stat-num" style="color:#409eff">{{ result.edges ? result.edges.length : 0 }}</div>
             <div class="stat-desc">条转发路径</div>
           </el-card>
         </el-col>
-        <el-col :span="6">
+        <el-col :span="8">
           <el-card shadow="never" class="stat-card">
             <div class="stat-num" style="color:#67c23a">{{ result.live.length }}</div>
             <div class="stat-desc">实时活跃订阅</div>
           </el-card>
         </el-col>
-        <el-col :span="6">
+        <el-col :span="8">
           <el-card shadow="never" class="stat-card">
             <div class="stat-num" style="color:#909399">{{ Object.keys(result.nodes).length }}</div>
             <div class="stat-desc">涉及节点数</div>
-          </el-card>
-        </el-col>
-        <el-col :span="6">
-          <el-card shadow="never" class="stat-card">
-            <div class="stat-num" style="color:#e6a23c">{{ result.unreachable.length }}</div>
-            <div class="stat-desc">无法连接</div>
           </el-card>
         </el-col>
       </el-row>
@@ -267,22 +261,6 @@
         </div>
       </el-card>
 
-      <!-- 无法连接 -->
-      <el-card v-if="result.unreachable.length > 0" shadow="never">
-        <div slot="header" class="card-header">
-          <i class="el-icon-warning" style="color:#e6a23c" />
-          <span>无法连接（heartbeat 超时）</span>
-        </div>
-        <el-table :data="result.unreachable" border size="small">
-          <el-table-column prop="ip" label="IP" width="140" />
-          <el-table-column prop="fqdn" label="FQDN" min-width="180" show-overflow-tooltip />
-          <el-table-column prop="error" label="错误" min-width="200">
-            <template slot-scope="{ row }">
-              <span style="color:#f56c6c;font-size:11px">{{ row.error }}</span>
-            </template>
-          </el-table-column>
-        </el-table>
-      </el-card>
     </div>
 
     <div v-else-if="!loading" class="empty-placeholder">

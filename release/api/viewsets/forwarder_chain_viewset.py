@@ -927,13 +927,26 @@ class ForwarderChainViewSet(viewsets.ViewSet):
         """
         import mdl.signals as _sig
         from mdl.models import MsgChainIndex
+        from django.db import OperationalError as DBOperationalError
+        from django.db.models import Max, Count
 
         close_old_connections()
-        total = MsgChainIndex.objects.count()
-        latest = MsgChainIndex.objects.order_by('-built_at').first()
+        try:
+            qs = MsgChainIndex.objects.aggregate(total=Count('id'), latest=Max('built_at'))
+            total = qs['total']
+            latest_dt = qs['latest']
+            latest_built_at = latest_dt.strftime('%Y-%m-%d %H:%M:%S') if latest_dt else None
+        except DBOperationalError:
+            # 表尚未创建（未执行 migrate），返回空状态
+            return ApiResponse(data={
+                'total': 0,
+                'latest_built_at': None,
+                'is_running': False,
+                'warning': '索引表不存在，请执行 python manage.py migrate',
+            })
         return ApiResponse(data={
             'total': total,
-            'latest_built_at': latest.built_at.strftime('%Y-%m-%d %H:%M:%S') if latest else None,
+            'latest_built_at': latest_built_at,
             'is_running': _sig._rebuild_running,
         })
 

@@ -168,16 +168,16 @@ export default {
       this.currentStep = '准备初始化...'
       try {
         const res = await initHost(this.host.id, {})
-        const respData = res.data
+        const respData = res.data && res.data.data ? res.data.data : res.data
         if (!respData || !respData.task_id) {
-          throw new Error((res && res.message) || '服务器返回数据异常')
+          throw new Error((res.data && res.data.message) || '服务器返回数据异常')
         }
         this.taskId = respData.task_id
 
         this.pollTimer = setInterval(async () => {
           try {
             const r = await getHostInitStatus(this.host.id, this.taskId)
-            const d = r.data
+            const d = r.data && r.data.data ? r.data.data : r.data
             if (!d) return
             this.deployLog = d.log || ''
             this.updateProgress(this.deployLog)

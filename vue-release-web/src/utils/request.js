@@ -44,26 +44,25 @@ service.interceptors.response.use(
    * You can also judge the status by HTTP Status Code
    */
   response => {
+    // 204 No Content（DELETE 等）直接成功返回
+    if (response.status === 204) {
+      return response
+    }
+
     const res = response.data
-    // if the custom code is not 200, it is judged as an error.
+
     if (res.code === 401) {
       window.location.href = window.config.BACKEND_LOGIN_URL + '?next=' + window.config.WEB_LOGIN_URL
       return res
     }
 
-    // 登录成功后跳入浏览的当前页面
-    // query: {redirect: router.currentRoute.fullPath}
-
-    // this.$router.push(`/login`)
-    // return
-    if (res.code !== 200) {
+    // 业务 code：200 成功，201 创建成功，其余视为错误
+    if (res.code !== 200 && res.code !== 201) {
       Message({
         message: res.message || 'Error',
         type: 'error',
         duration: 5 * 1000
       })
-
-      // 50008: Illegal token; 50012: Other clients logged in; 50014: Token expired;
       return Promise.reject(new Error(res.message || 'Error'))
     } else {
       return res

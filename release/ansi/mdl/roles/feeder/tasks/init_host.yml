@@ -65,3 +65,27 @@
     state: restarted
   ignore_errors: true
   become: true
+
+# ===== NTP 时间同步（chrony）=====
+- name: 安装 chrony
+  apt:
+    name: chrony
+    state: present
+  become: true
+
+- name: 配置 chrony（/etc/chrony/chrony.conf）
+  blockinfile:
+    path: /etc/chrony/chrony.conf
+    marker: "# {mark} IDC NTP SERVERS"
+    block: |
+      server 10.22.220.8 iburst prefer maxpoll 8
+      server 10.22.220.7 iburst
+    insertafter: EOF
+  become: true
+
+- name: 启用并启动 chrony 服务
+  systemd:
+    name: chrony
+    enabled: yes
+    state: restarted
+  become: true

@@ -106,17 +106,20 @@ export default {
           this.$emit('success')
         } else {
           const res = await createHost(this.form)
+          const created = res.data && res.data.data ? res.data.data : res.data
           this.visible = false
           this.$emit('success')
-          // 新增机器后提示并弹出初始化弹窗
-          this.$confirm('机器已创建，是否立即进行服务器系统环境初始化？', '新增成功', {
-            confirmButtonText: '立即初始化',
-            cancelButtonText: '稍后手动初始化',
-            type: 'success',
-          }).then(() => {
-            this.createdHost = res.data && res.data.data ? res.data.data : res.data
-            this.showInitModal = true
-          }).catch(() => {})
+          // 新增机器后提示是否立即初始化，用 $nextTick 确保表单弹窗已关闭再弹确认框
+          this.$nextTick(() => {
+            this.$confirm('机器已创建，是否立即进行服务器系统环境初始化？', '新增成功', {
+              confirmButtonText: '立即初始化',
+              cancelButtonText: '稍后手动初始化',
+              type: 'success',
+            }).then(() => {
+              this.createdHost = created
+              this.showInitModal = true
+            }).catch(() => {})
+          })
         }
       } catch (e) {
         const respData = e.response && e.response.data

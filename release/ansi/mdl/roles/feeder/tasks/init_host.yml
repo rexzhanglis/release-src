@@ -3,10 +3,39 @@
 # ===== 软件包 =====
 - name: 安装常用工具包
   apt:
-    name: [lrzsz, iftop, gdb, jq, dsniff]
+    name: [lrzsz, iftop, gdb, jq, dsniff, python3, python3-pip, python3-requests]
     state: present
     update_cache: yes
   ignore_errors: true
+  become: true
+
+# ===== 目录结构 =====
+- name: 创建 /datayes 基础目录结构
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - /datayes
+    - /datayes/forward
+    - /datayes/forward/bin
+    - /datayes/forward/logs
+    - /datayes/forward/backup
+  become: true
+
+- name: 设置 corefiles 目录权限（全局可写）
+  file:
+    path: /datayes/corefiles
+    state: directory
+    mode: '0777'
+  become: true
+
+- name: 配置 core dump 路径（sysctl）
+  sysctl:
+    name: kernel.core_pattern
+    value: /datayes/corefiles/core.%t.%e.%p
+    state: present
+    reload: yes
   become: true
 
 # ===== 运维用户 =====

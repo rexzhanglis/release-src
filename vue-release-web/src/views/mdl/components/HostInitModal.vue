@@ -10,7 +10,7 @@
     <!-- 阶段1：填写参数 -->
     <template v-if="!initStatus">
       <el-alert type="info" :closable="false" style="margin-bottom:16px">
-        将对目标服务器执行<strong>系统级初始化</strong>：安装工具包 → 创建运维用户 → 配置 limits → 配置 DNS<br>
+        将对目标服务器执行<strong>系统级初始化</strong>：安装工具包（含 python3）→ 创建目录结构 → 创建运维用户 → 配置 limits → 配置 DNS → 配置对时（chrony）<br>
         <span style="color:#909399;font-size:12px">每台机器只需执行一次，完成后再添加服务实例并进行实例初始化。</span>
       </el-alert>
 
@@ -29,24 +29,6 @@
         </el-descriptions-item>
       </el-descriptions>
 
-      <el-form label-width="110px" size="small">
-        <el-form-item label="SSH 用户名">
-          <el-input
-            v-model="form.ssh_user"
-            :placeholder="'留空则使用 ' + (host && host.user || 'root')"
-            style="width:280px"
-          />
-        </el-form-item>
-        <el-form-item label="SSH 密码">
-          <el-input
-            v-model="form.ssh_pass"
-            type="password"
-            show-password
-            placeholder="留空则使用系统全局配置的 SSH 密码"
-            style="width:280px"
-          />
-        </el-form-item>
-      </el-form>
     </template>
 
     <!-- 阶段2：执行+日志 -->
@@ -105,11 +87,16 @@ import { initHost, getHostInitStatus } from '@/api/mdlServer'
 
 const HOST_INIT_STEPS = [
   '安装常用工具包',
+  '创建 /datayes 基础目录结构',
+  '配置 core dump 路径',
   '创建运维用户',
   '配置运维用户 sudoers',
   '配置 limits.conf',
   '配置 DNS',
   '重启 systemd-resolved',
+  '安装 chrony',
+  '配置 chrony',
+  '启用并启动 chrony 服务',
 ]
 
 export default {
@@ -127,7 +114,6 @@ export default {
   },
   data() {
     return {
-      form: { ssh_user: '', ssh_pass: '' },
       starting: false,
       initStatus: '',
       deployLog: '',
@@ -139,7 +125,6 @@ export default {
   },
   methods: {
     handleOpen() {
-      this.form = { ssh_user: '', ssh_pass: '' }
       this.starting = false
       this.initStatus = ''
       this.deployLog = ''
@@ -182,11 +167,7 @@ export default {
       this.initProgress = 0
       this.currentStep = '准备初始化...'
       try {
-        const payload = {}
-        if (this.form.ssh_user) payload.ssh_user = this.form.ssh_user
-        if (this.form.ssh_pass) payload.ssh_pass = this.form.ssh_pass
-
-        const res = await initHost(this.host.id, payload)
+        const res = await initHost(this.host.id, {})
         const respData = res.data
         if (!respData || !respData.task_id) {
           throw new Error((res && res.message) || '服务器返回数据异常')

@@ -164,10 +164,15 @@
           <template slot-scope="{ row }">{{ row.created_time | formatTime }}</template>
         </el-table-column>
       </template>
-      <el-table-column label="操作" width="220" align="center" fixed="right">
+      <el-table-column label="操作" width="280" align="center" fixed="right">
         <template slot-scope="{ row }">
           <el-button size="mini" type="text" icon="el-icon-view" @click.stop="handleViewDetail(row)">详情</el-button>
           <el-button size="mini" type="text" icon="el-icon-edit" @click.stop="handleEdit(row)">编辑</el-button>
+          <el-button
+            v-if="row.init_status !== 'ready'"
+            size="mini" type="text" icon="el-icon-setting" style="color:#e6a23c"
+            @click.stop="handleInitHost(row)"
+          >初始化</el-button>
           <el-button
             size="mini" type="text" icon="el-icon-s-grid" style="color:#409eff"
             @click.stop="$router.push({ name: 'mdlServerDetail', params: { id: row.id }, query: { type: 'host' } })"
@@ -200,6 +205,13 @@
       v-model="showForm"
       :host="currentHost"
       @success="fetchHosts"
+    />
+
+    <!-- 初始化机器弹窗 -->
+    <host-init-modal
+      v-model="showInitModal"
+      :host="initTargetHost"
+      @done="fetchHosts"
     />
 
     <!-- 详情弹窗 -->
@@ -402,6 +414,7 @@
 <script>
 import { getHosts, deleteHost, getLabels, createLabel, deleteLabel, batchListServices, batchRestartHosts } from '@/api/mdlServer'
 import HostFormModal from './components/HostFormModal'
+import HostInitModal from './components/HostInitModal'
 
 const DEFAULT_COLUMNS = [
   { key: 'fqdn', label: 'FQDN', visible: true, fixed: true },
@@ -426,7 +439,7 @@ function loadColumns() {
 
 export default {
   name: 'ServerManagement',
-  components: { HostFormModal },
+  components: { HostFormModal, HostInitModal },
   filters: {
     formatTime(val) {
       if (!val) return ''
@@ -462,6 +475,9 @@ export default {
       // 详情弹窗
       showDetail: false,
       detailHost: null,
+      // 初始化弹窗
+      showInitModal: false,
+      initTargetHost: null,
       // 列管理
       columnDefs: loadColumns(),
       dragSrcKey: null,
@@ -568,6 +584,11 @@ export default {
       if (!this.detailHost) return
       this.showDetail = false
       this.$router.push({ name: 'mdlServerDetail', params: { id: this.detailHost.id }, query: { type: 'host' } })
+    },
+
+    handleInitHost(row) {
+      this.initTargetHost = row
+      this.showInitModal = true
     },
 
     async handleDelete(row) {

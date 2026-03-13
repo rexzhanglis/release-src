@@ -3,10 +3,33 @@
 # ===== 软件包 =====
 - name: 安装常用工具包
   apt:
-    name: [lrzsz, iftop, gdb, jq, dsniff]
+    name: [lrzsz, iftop, gdb, jq, dsniff, python3, python3-pip, python3-requests]
     state: present
     update_cache: yes
   ignore_errors: true
+  become: true
+
+# ===== 目录结构 =====
+- name: 创建 /datayes 基础目录结构
+  file:
+    path: /datayes
+    state: directory
+    mode: '0755'
+  become: true
+
+- name: 设置 corefiles 目录权限（全局可写）
+  file:
+    path: /datayes/corefiles
+    state: directory
+    mode: '0777'
+  become: true
+
+- name: 配置 core dump 路径（sysctl）
+  sysctl:
+    name: kernel.core_pattern
+    value: /datayes/corefiles/core.%t.%e.%p
+    state: present
+    reload: yes
   become: true
 
 # ===== 运维用户 =====
@@ -64,4 +87,28 @@
     name: systemd-resolved
     state: restarted
   ignore_errors: true
+  become: true
+
+# ===== NTP 时间同步（chrony）=====
+- name: 安装 chrony
+  apt:
+    name: chrony
+    state: present
+  become: true
+
+- name: 配置 chrony（/etc/chrony/chrony.conf）
+  blockinfile:
+    path: /etc/chrony/chrony.conf
+    marker: "# {mark} IDC NTP SERVERS"
+    block: |
+      server 10.22.220.8 iburst prefer maxpoll 8
+      server 10.22.220.7 iburst
+    insertafter: EOF
+  become: true
+
+- name: 启用并启动 chrony 服务
+  systemd:
+    name: chrony
+    enabled: yes
+    state: restarted
   become: true

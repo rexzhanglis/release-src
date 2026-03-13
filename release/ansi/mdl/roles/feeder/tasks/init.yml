@@ -145,7 +145,7 @@
   when: is_egress | default(false) | bool
   cron:
     name: "get_cloud_conf"
-    job: "cd {{ install_dir }} && {{ remote_python | default('/usr/bin/python3') }} get_cloud_conf.py"
+    job: "cd {{ install_dir }} && {{ remote_python | default('/usr/bin/python3') }} get_cloud_conf.py -d 1"
     minute: "*/10"
     state: present
   become: true

@@ -985,6 +985,22 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                     stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
                 )
                 output_parts.append(f'[consul_pull]\n{proc_pull.stdout or proc_pull.stderr}')
+                if proc_pull.returncode != 0:
+                    shutil.rmtree(tmpdir, ignore_errors=True)
+                    _write_op_log(
+                        host=server.host,
+                        service_name=', '.join(services),
+                        action=f'systemd_{ctrl_action}',
+                        operator=getattr(request.user, 'username', 'unknown'),
+                        status='failed',
+                        detail='\n'.join(output_parts),
+                    )
+                    return ApiResponse(data={
+                        'ok': False,
+                        'output': '\n'.join(output_parts),
+                        'action': ctrl_action,
+                        'services': services,
+                    })
 
             # 执行 systemctl 命令（批量合并成一条）
             svc_list = ' '.join(services)

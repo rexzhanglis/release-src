@@ -981,7 +981,7 @@ class MdlServerViewSet(viewsets.ModelViewSet):
                 pull_env = f'CONSUL_TOKEN={consul_token} {remote_python} {pull_script}'
                 proc_pull = _sp.run(
                     ['ansible', 'release', '-i', hosts_path, '-m', 'shell',
-                     '-a', pull_env],
+                     '-a', pull_env, '--become'],
                     stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env, timeout=30
                 )
                 output_parts.append(f'[consul_pull]\n{proc_pull.stdout or proc_pull.stderr}')

@@ -1,4 +1,19 @@
-- debug: msg="deploying feeder_handler {{ version }}"
+- name: fail if executable is feeder_client
+  fail:
+    msg: "feeder_client 不支持版本发布，请检查发布对象配置。"
+  when: executable == 'feeder_client'
+
+- name: fail if executable is unknown
+  fail:
+    msg: "未知的 executable '{{ executable }}'，支持: feeder_handler, feeder_receiver。"
+  when: executable not in _install_items_map
+
+- name: resolve install_items and backup_items
+  set_fact:
+    install_items: "{{ _install_items_map[executable] }}"
+    backup_items: "{{ _backup_items_map[executable] }}"
+
+- debug: msg="deploying {{ executable }} {{ version }}"
 
 - name: 初始化系统（全新部署时执行）
   when: is_new_deploy | default(false) | bool

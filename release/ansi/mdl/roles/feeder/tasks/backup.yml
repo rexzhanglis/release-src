@@ -1,6 +1,22 @@
 - name: set backup dir
   set_fact: backup_dir={{ backups_dir }}/{{ executable | default('feeder_handler') }}_{{ existing_version }}_{{ ansible_date_time.iso8601_basic_short }}
 
-- name: backup install dir
-  command: cp -r {{ install_dir }} {{ backup_dir }}
+- name: create backup dir
+  file:
+    path: "{{ backup_dir }}"
+    state: directory
+    owner: "{{ user }}"
+    group: "{{ user }}"
   become: true
+
+- name: backup files from backup_items
+  shell: cp {{ install_dir }}/{{ item }} {{ backup_dir }}/
+  with_items: "{{ backup_items }}"
+  become: true
+  failed_when: false
+
+- name: backup consul config file
+  shell: cp {{ install_dir }}/{{ consul_files.split(',')[0] | trim }} {{ backup_dir }}/
+  become: true
+  when: consul_files is defined and consul_files | trim != ''
+  failed_when: false

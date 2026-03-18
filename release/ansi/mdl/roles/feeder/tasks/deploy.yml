@@ -2,6 +2,10 @@
   file: path={{ install_dir }} state=directory owner={{ user }} group={{ user }}
   become: true
 
+- name: clean old binaries from install_dir
+  shell: find {{ install_dir }} -maxdepth 1 -type f ! -name "*.cfg" -delete
+  become: true
+
 - name: unarchive package
   unarchive:
     src: "/datayes/mdl/packages/{{ package_name }}"
@@ -10,8 +14,11 @@
     group: "{{ user }}"
   become: true
 
-- name: move files
-  shell: mv {{ install_dir }}/mdl_release/ubuntu-14.04-gcc-4.8/* {{ install_dir }}/
+- name: copy install_items from extracted archive to install_dir
+  shell: >
+    cp {{ install_dir }}/mdl_release/ubuntu-14.04-gcc-4.8/{{ item }}
+    {{ install_dir }}/
+  with_items: "{{ install_items }}"
   become: true
 
 - name: clean folder

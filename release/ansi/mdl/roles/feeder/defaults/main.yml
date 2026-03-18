@@ -1,14 +1,36 @@
-# for version odler than 2.13.36
+# for version older than 2.13.36
 # package_name: mdl_release-{{ version }}.tar.gz
 package_name: market_data_line-{{ version }}.tar.gz
 package_url: http://artifactory.datayes.com/artifactory/mdl-release/com/datayes/market_data_line/{{ version }}/{{ package_name }}
 executable: feeder_handler
-install_items:
-  - "{{ executable }}"
-  - libmdl_api.so
-backup_items:
-  - "{{ executable }}"
-  - "{{ consul_files.split(',')[0] | trim }}"
-  - libmdl_api.so
-  - version
 put_files: []
+
+# Per-executable install file lists (shell glob patterns supported)
+_install_items_map:
+  feeder_handler:
+    - feeder_handler
+    - libmdl_api.so
+  feeder_receiver:
+    - feeder_receiver
+    - "libgfexl1.so*"
+    - "libgfexl2.so*"
+    - "libmdl_api.so*"
+    - "libmdpapi64.so*"
+
+# Per-executable backup file lists (consul config file handled separately in backup.yml)
+_backup_items_map:
+  feeder_handler:
+    - feeder_handler
+    - libmdl_api.so
+    - version
+  feeder_receiver:
+    - feeder_receiver
+    - "libgfexl1.so*"
+    - "libgfexl2.so*"
+    - "libmdl_api.so*"
+    - "libmdpapi64.so*"
+    - version
+
+# Resolved at runtime by set_fact in tasks/main.yml
+install_items: []
+backup_items: []

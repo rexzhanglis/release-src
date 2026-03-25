@@ -16,7 +16,7 @@ jira_server = "https://jira.datayes.com/"
 username = "svc-jira"
 password = "f14cK6gSHjM8"
 
-Jira_client = Jira(url=jira_server, username=username, password=password, timeout=2)
+Jira_client = Jira(url=jira_server, username=username, password=password, timeout=10)
 
 
 class JiraComment(object):

@@ -47,11 +47,26 @@ class MdlReleaseDetailService(ReleaseDetailService):
         import threading
         from django.db import connection
 
+        UPGRADE_TIMEOUT = 600  # 每次 upgrade 最多等待 10 分钟
+
         def _run():
             connection.close()
             self._do_upgrade(modules)
 
-        threading.Thread(target=_run, daemon=True).start()
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+
+        def _watchdog():
+            t.join(timeout=UPGRADE_TIMEOUT)
+            if t.is_alive():
+                self.release_detail.set_log(
+                    "发布超时（超过 {} 秒），自动标记为发布失败，请检查目标机器后点击失败重试或失败跳过".format(UPGRADE_TIMEOUT),
+                    self.user,
+                    level="error",
+                )
+                self.release_detail.set_status("发布失败")
+
+        threading.Thread(target=_watchdog, daemon=True).start()
 
     def _do_upgrade(self, modules):
         try:

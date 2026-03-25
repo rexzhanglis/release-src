@@ -5,6 +5,7 @@ time: 2021/9/28 14:06
 """
 import re
 
+from requests.exceptions import ReadTimeout, ConnectionError
 from rest_framework import viewsets
 from rest_framework.decorators import action
 
@@ -48,7 +49,10 @@ class JiraViewSet(viewsets.ModelViewSet):
         """
         获取mdl最近30天的发布申请
         """
-        res = JiraClient().jql(jql=Constance.get_value("mdl_release_jql"), field=["key"])
+        try:
+            res = JiraClient().jql(jql=Constance.get_value("mdl_release_jql"), field=["key"])
+        except (ReadTimeout, ConnectionError):
+            raise CustomRuntimeException("Jira服务连接超时，请稍后重试")
         return ApiResponse(data=[row["key"] for row in res])
 
     @action(detail=False, methods=["get"], url_path="get_mdl_release_issue_version")

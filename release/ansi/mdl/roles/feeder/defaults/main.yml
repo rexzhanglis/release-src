@@ -11,11 +11,7 @@ _install_items_map:
     - feeder_handler
     - libmdl_api.so
   feeder_receiver:
-    - feeder_receiver
-    - "libgfexl1.so*"
-    - "libgfexl2.so*"
-    - "libmdl_api.so*"
-    - "libmdpapi64.so*"
+    - "*"
 
 # Per-executable backup file lists (consul config file handled separately in backup.yml)
 _backup_items_map:
@@ -24,11 +20,7 @@ _backup_items_map:
     - libmdl_api.so
     - version
   feeder_receiver:
-    - feeder_receiver
-    - "libgfexl1.so*"
-    - "libgfexl2.so*"
-    - "libmdl_api.so*"
-    - "libmdpapi64.so*"
+    - "*"
     - version
 
 # Resolved at runtime by set_fact in tasks/main.yml

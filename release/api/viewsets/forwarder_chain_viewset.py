@@ -467,15 +467,16 @@ def build_chain(service_id, msg_id):
                     upstream_cf = ip_to_cf.get(up_ip)
 
                 # 修复 A：端口兜底匹配增加 IP 校验
-                # 只有当 up_ip 不是有效 IP 格式（如实例名不含 IP 的虚拟名称）时，才尝试仅凭端口匹配；
-                # 如果 up_ip 已经是明确的 IP 地址，但在上述索引中找不到，说明该 IP 确实不在配置库中，不应盲目兜底。
-                is_valid_ip = up_ip and up_ip.count('.') == 3
-                if upstream_cf is None and not is_valid_ip:
+                # 只有当 up_ip 无法解析为有效 IP 时（如实例名不含 IP 的虚拟名称），才尝试仅凭端口匹配；
+                # 如果 up_ip 已经是明确的 IP 地址（x.x.x.x 格式），说明我们明确知道目标机器 IP，
+                # 此时若上述索引中找不到，不应盲目兜底，否则匹配到的候选极可能是不同机器。
+                if upstream_cf is None:
+                    up_ip_looks_valid = bool(up_ip and up_ip.count('.') == 3)
                     candidates = port_to_cfs.get(up_port, [])
-                    if len(candidates) == 1:
+                    if len(candidates) == 1 and not up_ip_looks_valid:
                         upstream_cf = candidates[0]
-                    elif len(candidates) > 1 and up_ip:
-                        # 多个候选时，尝试通过实例名中解析出的 IP 精确匹配
+                    elif len(candidates) >= 1 and up_ip:
+                        # 多个候选时（或 IP 已知时），尝试通过实例名中解析出的 IP 精确匹配
                         for c in candidates:
                             if _cf_ip(c) == up_ip:
                                 upstream_cf = c
@@ -514,6 +515,7 @@ def build_chain(service_id, msg_id):
                         up_type = 'aggregator'
                     else:
                         up_type = 'forwarder'
+
                     try:
                         up_st_name = upstream_cf.instance.service_type.name or ''
                     except Exception:

@@ -16,6 +16,9 @@ curl ${params}settings.py?raw > /datayes/release/release/settings.py
 
 service cron start
 
+# 收集静态文件（Django admin CSS/JS 等）
+python manage.py collectstatic --noinput
+
 # 自动执行数据库迁移（新表建表、字段变更等）
 python manage.py migrate --noinput
 

@@ -1,5 +1,6 @@
 setuptools==69.5.1
 Django==3.2
+whitenoise==6.7.0
 django-auth-ldap==2.4.0
 django-cors-headers==3.7.0
 djangorestframework==3.12.4

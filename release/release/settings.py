@@ -163,6 +163,7 @@ APPEND_SLASH = False
 # https://docs.djangoproject.com/en/3.0/howto/static-files/
 
 STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 """
 cors
 """
@@ -247,7 +248,7 @@ DEPLOY_DEFAULT_BACKUPS_DIR = '/datayes/app/backups'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': os.environ.get("DB_NAME", "release_qa"),
+        'NAME': os.environ.get("DB_NAME", "release_test"),
         'USER': os.environ.get("DB_USER", "alertcenter"),
         'PASSWORD': os.environ.get("DB_PASSWORD", "Huawei@123"),
         'HOST': os.environ.get("DB_HOST", "10.24.51.155"),

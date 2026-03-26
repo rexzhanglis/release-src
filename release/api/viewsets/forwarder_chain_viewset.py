@@ -465,8 +465,12 @@ def build_chain(service_id, msg_id):
                 # IP+端口未命中，尝试仅用 IP 查（端口不同但同一台机器）
                 if upstream_cf is None:
                     upstream_cf = ip_to_cf.get(up_ip)
-                # IP 也解析不到时，仅凭端口匹配（实例名不含 IP 的情况）
-                if upstream_cf is None:
+
+                # 修复 A：端口兜底匹配增加 IP 校验
+                # 只有当 up_ip 不是有效 IP 格式（如实例名不含 IP 的虚拟名称）时，才尝试仅凭端口匹配；
+                # 如果 up_ip 已经是明确的 IP 地址，但在上述索引中找不到，说明该 IP 确实不在配置库中，不应盲目兜底。
+                is_valid_ip = up_ip and up_ip.count('.') == 3
+                if upstream_cf is None and not is_valid_ip:
                     candidates = port_to_cfs.get(up_port, [])
                     if len(candidates) == 1:
                         upstream_cf = candidates[0]
@@ -492,10 +496,19 @@ def build_chain(service_id, msg_id):
                         get_or_create_node(ext_id, ext_id, 'external', matched_svcs)
                         add_edge(ext_id, this_ip, matched_svcs)
                 else:
-                    # 内部机器（转发机或接收机），继续往上追
-                    up_ip_real = _cf_ip(upstream_cf) or up_ip  # 解析失败时用上游地址里的 IP
+                    # 内部机器（转发机或接收机）
+                    # 修复 B：上游消息验证
+                    # 验证上游配置确实包含目标消息。如果上游配置中没有该消息，说明下游的引用有误或已过期，跳过。
+                    # 接收机不受此检查影响（接收机从交易所接收全量数据，其 UpStreams 通常为空或指向外部）。
                     up_content = upstream_cf.content or {}
-                    if _is_receiver_cf(upstream_cf):
+                    is_receiver = _is_receiver_cf(upstream_cf)
+                    if not is_receiver:
+                        up_valid_entries = _get_upstreams_from_content(up_content, service_id, msg_id)
+                        if not up_valid_entries:
+                            continue
+
+                    up_ip_real = _cf_ip(upstream_cf) or up_ip  # 解析失败时用上游地址里的 IP
+                    if is_receiver:
                         up_type = 'receiver'
                     elif up_content.get('TEAMING_HANDLER'):
                         up_type = 'aggregator'

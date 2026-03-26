@@ -466,12 +466,16 @@ def build_chain(service_id, msg_id):
                 if upstream_cf is None:
                     upstream_cf = ip_to_cf.get(up_ip)
                 # IP 也解析不到时，仅凭端口匹配（实例名不含 IP 的情况）
+                # 注意：当 up_ip 已经是有效 IP（x.x.x.x 格式）时，说明我们明确知道
+                # 目标机器的 IP，仅凭端口匹配到的候选极可能是不同机器，不应使用。
+                # 只有当 up_ip 无法解析为有效 IP 时（如实例名不含 IP），才使用端口兜底。
                 if upstream_cf is None:
+                    up_ip_looks_valid = bool(up_ip and up_ip.count('.') == 3)
                     candidates = port_to_cfs.get(up_port, [])
-                    if len(candidates) == 1:
+                    if len(candidates) == 1 and not up_ip_looks_valid:
                         upstream_cf = candidates[0]
-                    elif len(candidates) > 1 and up_ip:
-                        # 多个候选时，尝试通过实例名中解析出的 IP 精确匹配
+                    elif len(candidates) >= 1 and up_ip:
+                        # 多个候选时（或 IP 已知时），尝试通过实例名中解析出的 IP 精确匹配
                         for c in candidates:
                             if _cf_ip(c) == up_ip:
                                 upstream_cf = c
@@ -501,6 +505,16 @@ def build_chain(service_id, msg_id):
                         up_type = 'aggregator'
                     else:
                         up_type = 'forwarder'
+
+                    # 【关键校验】对于转发机/聚合机，验证其配置是否确实包含目标消息。
+                    # 如果上游机器的配置中没有该消息（不在 UpStreams 的 Services.Messages 里），
+                    # 说明下游配置的 Address 引用有误或已过期，该上游不应出现在链路中。
+                    # 接收机不做此检查：接收机从交易所接收全量数据，不在 UpStreams 中按消息号列出。
+                    if up_type != 'receiver':
+                        up_has_msg = _get_upstreams_from_content(up_content, service_id, msg_id)
+                        if not up_has_msg:
+                            continue
+
                     try:
                         up_st_name = upstream_cf.instance.service_type.name or ''
                     except Exception:

@@ -63,26 +63,59 @@
         <div slot="header" class="card-header">
           <i class="el-icon-share" style="color:#409eff" />
           <span>转发拓扑图（配置文件追溯）</span>
-          <el-tag size="mini" type="info" style="margin-left:8px">外部源 → 接收机 → 转发机（从左到右）</el-tag>
+          <el-radio-group v-model="viewMode" size="mini" style="margin-left:12px">
+            <el-radio-button label="graph">拓扑图</el-radio-button>
+            <el-radio-button label="text">文字链路</el-radio-button>
+          </el-radio-group>
+          <el-tag v-if="viewMode === 'graph'" size="mini" type="info" style="margin-left:8px">外部源 → 接收机 → 转发机（从左到右）</el-tag>
           <el-tag v-if="result.live && result.live.length > 0" size="mini" type="success" style="margin-left:4px">
             <i class="el-icon-user" /> 绿色边框节点有下游客户端，点击查看
           </el-tag>
           <span style="margin-left:auto;display:flex;gap:8px;align-items:center">
-            <span class="legend-dot" style="background:#f56c6c"></span><span class="legend-text">接收机(外部)</span>
-            <span class="legend-dot" style="background:#e6a23c"></span><span class="legend-text">接收机</span>
-            <span class="legend-dot" style="background:#409eff"></span><span class="legend-text">转发机</span>
-            <span class="legend-dot" style="background:#67c23a"></span><span class="legend-text">聚合转发</span>
-            <span class="legend-dot" style="background:#9c27b0"></span><span class="legend-text">上证云</span>
-            <el-tooltip content="滚轮缩放 · 拖空白区域平移 · 拖节点移动" placement="top">
-              <i class="el-icon-info" style="color:#909399;cursor:help" />
-            </el-tooltip>
-            <el-button size="mini" icon="el-icon-refresh-left" @click="resetView">重置视图</el-button>
+            <template v-if="viewMode === 'graph'">
+              <span class="legend-dot" style="background:#f56c6c"></span><span class="legend-text">接收机(外部)</span>
+              <span class="legend-dot" style="background:#e6a23c"></span><span class="legend-text">接收机</span>
+              <span class="legend-dot" style="background:#409eff"></span><span class="legend-text">转发机</span>
+              <span class="legend-dot" style="background:#67c23a"></span><span class="legend-text">聚合转发</span>
+              <span class="legend-dot" style="background:#9c27b0"></span><span class="legend-text">上证云</span>
+              <el-tooltip content="滚轮缩放 · 拖空白区域平移 · 拖节点移动" placement="top">
+                <i class="el-icon-info" style="color:#909399;cursor:help" />
+              </el-tooltip>
+              <el-button size="mini" icon="el-icon-refresh-left" @click="resetView">重置视图</el-button>
+            </template>
           </span>
         </div>
 
         <div v-if="topoLayers.length === 0" class="empty-tip">
           未找到包含该消息的配置
         </div>
+
+        <!-- ===== 文字链路模式 ===== -->
+        <div v-else-if="viewMode === 'text'" class="text-chain-wrap">
+          <div v-for="(tree, idx) in chainForest" :key="idx" class="text-chain-tree">
+            <div
+              v-for="row in flattenTree(tree)"
+              :key="row.id + '-' + row.depth"
+              class="text-chain-row"
+              :style="{ paddingLeft: (row.depth * 24 + 8) + 'px' }"
+            >
+              <span v-if="row.depth > 0" class="text-chain-indent">└─</span>
+              <span class="text-chain-type" :class="'tc-' + row.type">{{ row.typeLabel }}</span>
+              <span class="text-chain-name" :title="row.instance">{{ row.displayName }}</span>
+              <span class="text-chain-ip">({{ row.id }})</span>
+              <el-tag
+                v-for="s in row.services" :key="s.msg_label"
+                size="mini" type="info" style="margin-left:4px"
+              >{{ s.msg_label }}</el-tag>
+              <span v-if="liveByForwarder[row.id] && liveByForwarder[row.id].length > 0" class="text-chain-live">
+                <i class="el-icon-user" /> {{ liveByForwarder[row.id].length }} 个下游
+              </span>
+            </div>
+          </div>
+          <div v-if="chainForest.length === 0" class="empty-tip">无链路数据</div>
+        </div>
+
+        <!-- ===== 拓扑图模式 ===== -->
         <div
           v-else
           ref="topoScroll"
@@ -295,6 +328,7 @@ export default {
       svgReady: false,
       hoveredNode: null,
       selectedEdgeIndex: null,
+      viewMode: 'text',   // 'graph' | 'text'
       rebuilding: false,
       indexStatus: null,
       _statusTimer: null,
@@ -466,6 +500,47 @@ export default {
           selectedMarkerEnd: isExternal ? 'url(#arrow-gray-sel)' : 'url(#arrow-blue-sel)',
         }
       }).filter(Boolean)
+    },
+
+    /**
+     * 将 nodes + edges 构建成森林（多棵树），用于文字链路展示。
+     * 每棵树从一个根节点（无入边）开始，children 按实例名排序。
+     */
+    chainForest() {
+      if (!this.result || !this.result.nodes) return []
+      const nodes = this.result.nodes
+      const edges = this.result.edges || []
+      if (!Object.keys(nodes).length) return []
+
+      // 构建 children map
+      const childrenMap = {}
+      const inDegree = {}
+      for (const nid of Object.keys(nodes)) {
+        childrenMap[nid] = []
+        inDegree[nid] = 0
+      }
+      for (const e of edges) {
+        if (childrenMap[e.from]) childrenMap[e.from].push(e.to)
+        if (e.to in inDegree) inDegree[e.to]++
+      }
+
+      // 根节点 = 入度为 0
+      const roots = Object.keys(nodes).filter(id => (inDegree[id] || 0) === 0)
+
+      // 递归构建树
+      const buildTree = (nodeId, visited) => {
+        if (visited.has(nodeId)) return null
+        visited.add(nodeId)
+        const node = nodes[nodeId]
+        if (!node) return null
+        const kids = (childrenMap[nodeId] || [])
+          .map(cid => buildTree(cid, visited))
+          .filter(Boolean)
+          .sort((a, b) => (a.instance || '').localeCompare(b.instance || ''))
+        return { ...node, children: kids }
+      }
+
+      return roots.map(r => buildTree(r, new Set())).filter(Boolean)
     },
   },
   watch: {
@@ -653,6 +728,23 @@ export default {
       if (!inst || inst === node.id) return node.id
       return inst.length > 20 ? inst.slice(0, 18) + '…' : inst
     },
+
+    /** 将树递归展平为 [{...node, depth, typeLabel, displayName}, ...] */
+    flattenTree(tree, depth = 0) {
+      if (!tree) return []
+      const typeLabels = { external: '接收机(外部)', receiver: '接收机', forwarder: '转发机', aggregator: '聚合转发' }
+      const row = {
+        ...tree,
+        depth,
+        typeLabel: typeLabels[tree.type] || tree.type,
+        displayName: this.nodeDisplayName(tree),
+      }
+      const rows = [row]
+      for (const child of (tree.children || [])) {
+        rows.push(...this.flattenTree(child, depth + 1))
+      }
+      return rows
+    },
   },
 }
 </script>
@@ -793,5 +885,63 @@ export default {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* ===== 文字链路模式 ===== */
+.text-chain-wrap {
+  padding: 16px 8px;
+  max-height: 600px;
+  overflow-y: auto;
+  background: #fafafa;
+  border-radius: 4px;
+}
+.text-chain-tree {
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px dashed #e4e7ed;
+}
+.text-chain-tree:last-child { border-bottom: none; margin-bottom: 0; }
+.text-chain-row {
+  padding: 4px 0;
+  font-size: 13px;
+  color: #303133;
+  font-family: 'Consolas', 'Monaco', 'Menlo', monospace;
+  line-height: 1.7;
+  white-space: nowrap;
+}
+.text-chain-row:hover { background: #f0f7ff; }
+.text-chain-indent {
+  color: #c0c4cc;
+  margin-right: 4px;
+  user-select: none;
+}
+.text-chain-type {
+  display: inline-block;
+  font-size: 11px;
+  color: #fff;
+  border-radius: 3px;
+  padding: 0 5px;
+  margin-right: 6px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  vertical-align: middle;
+  line-height: 18px;
+}
+.tc-external   { background: #f56c6c; }
+.tc-receiver   { background: #e6a23c; }
+.tc-forwarder  { background: #409eff; }
+.tc-aggregator { background: #67c23a; }
+.text-chain-name {
+  font-weight: 600;
+  margin-right: 4px;
+}
+.text-chain-ip {
+  color: #909399;
+  font-size: 12px;
+}
+.text-chain-live {
+  margin-left: 8px;
+  color: #67c23a;
+  font-size: 11px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 </style>

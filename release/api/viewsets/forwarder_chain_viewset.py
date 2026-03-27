@@ -214,7 +214,9 @@ def _build_ip_to_config_map():
         if _is_receiver_cf(cf):
             if ip:
                 receiver_ip_set.add(ip)
-                ip_to_cf[ip] = cf
+                # 只在该 IP 尚未被 handler 占位时才索引 receiver，避免 receiver 覆盖 handler
+                if ip not in ip_to_cf:
+                    ip_to_cf[ip] = cf
                 inst_port = cf.instance.port
                 if inst_port:
                     ip_port_to_cf[(ip, inst_port)] = cf
@@ -482,15 +484,22 @@ def build_chain(service_id, msg_id):
                                 upstream_cf = c
                                 break
 
+                # 修复 C：所有索引均未命中时，遍历 handler_cfs 按 IP 精确匹配
+                if upstream_cf is None:
+                    for hc in handler_cfs:
+                        if _cf_ip(hc) == up_ip:
+                            upstream_cf = hc
+                            break
+
                 if upstream_cf is None:
                     if up_ip in receiver_ip_set:
                         # 接收机（IP 已知但配置文件未能建立索引）
                         get_or_create_node(up_ip, up_ip, 'receiver', matched_svcs)
                         add_edge(up_ip, this_ip, matched_svcs)
                     elif up_ip in internal_ip_set:
-                        # 内部转发机（MdlServer 里有记录但配置文件未录入）
-                        get_or_create_node(up_ip, up_ip, 'forwarder', matched_svcs)
-                        add_edge(up_ip, this_ip, matched_svcs)
+                        # 修复 D：内部转发机但无配置文件，无法验证是否处理目标消息，跳过以避免误报
+                        # 如果该机器确实在链路中，它的配置文件会被上面的索引/遍历找到并走 Fix B 验证
+                        continue
                     else:
                         # 真正的外部源（交易所，IP 在平台上没有任何记录）
                         ext_id = f'{up_ip}:{up_port}'

@@ -23,6 +23,7 @@ from api.viewsets.config_mgmt_viewset import (
     ServiceTypeViewSet,
     ConfigAuditLogViewSet,
     ConfigHistoryViewSet,
+    GitlabWebhookViewSet,
 )
 from api.viewsets.mdl_server_viewset import MdlServerViewSet, LabelViewSet, HostViewSet
 from api.viewsets.forwarder_chain_viewset import ForwarderChainViewSet
@@ -45,6 +46,7 @@ router.register(r'config-mgmt/instances', ConfigInstanceViewSet, basename="confi
 router.register(r'config-mgmt/service-types', ServiceTypeViewSet, basename="config-service-type")
 router.register(r'config-mgmt/audit-logs', ConfigAuditLogViewSet, basename="config-audit-log")
 router.register(r'config-mgmt/history', ConfigHistoryViewSet, basename="config-history")
+router.register(r'config-mgmt/webhook', GitlabWebhookViewSet, basename="config-webhook")
 router.register(r'mdl-hosts', HostViewSet, basename="mdl-host")
 router.register(r'mdl-servers', MdlServerViewSet, basename="mdl-server")
 router.register(r'mdl-labels', LabelViewSet, basename="mdl-label")

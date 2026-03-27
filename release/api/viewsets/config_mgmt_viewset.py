@@ -1144,6 +1144,52 @@ class ConfigSyncViewSet(viewsets.ViewSet):
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+class GitlabWebhookViewSet(viewsets.ViewSet):
+    """
+    GitLab Webhook 回调：Push 事件自动触发配置同步。
+
+    GitLab 配置：
+      URL:    https://<your-domain>/api/config-mgmt/webhook/
+      Method: POST
+      Secret Token: 与 settings.GITLAB_WEBHOOK_SECRET 一致
+      Trigger: Push events
+    """
+    authentication_classes = []   # Webhook 不走用户认证
+    permission_classes = []       # 通过 Secret Token 验证
+
+    def create(self, request):
+        import logging
+        import threading
+        logger = logging.getLogger('forwarder_chain')
+
+        # 校验 Secret Token
+        expected_token = getattr(settings, 'GITLAB_WEBHOOK_SECRET', '')
+        received_token = request.META.get('HTTP_X_GITLAB_TOKEN', '')
+        if expected_token and received_token != expected_token:
+            return Response({'code': 403, 'message': 'Invalid token'},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        # 仅处理 push 事件
+        event = request.META.get('HTTP_X_GITLAB_EVENT', '')
+        if event != 'Push Hook':
+            return ApiResponse(data={'status': 'ignored', 'event': event})
+
+        # 异步执行同步，不阻塞 Webhook 响应（GitLab 要求 10s 内返回）
+        def _do_sync():
+            try:
+                from django.db import close_old_connections
+                close_old_connections()
+                results = _sync_from_gitlab()
+                logger.info(f'[Webhook] GitLab 同步完成: {results}')
+            except Exception as e:
+                logger.error(f'[Webhook] GitLab 同步失败: {e}')
+
+        t = threading.Thread(target=_do_sync, daemon=True, name='gitlab-webhook-sync')
+        t.start()
+
+        return ApiResponse(data={'status': 'accepted', 'message': '同步已触发'})
+
+
 class ConfigDeployViewSet(viewsets.ViewSet):
     """配置部署任务（list/preview 需要 operator，create 需要 admin）"""
     permission_classes = [ConfigDeployPermission]

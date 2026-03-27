@@ -93,6 +93,12 @@
 
         <!-- ===== 文字链路模式 ===== -->
         <div v-else-if="viewMode === 'text'" class="text-chain-wrap">
+          <div class="text-chain-toolbar">
+            <el-button size="mini" icon="el-icon-minus" @click="collapseAll">全部收起</el-button>
+            <el-button size="mini" icon="el-icon-plus" @click="expandAll">全部展开</el-button>
+            <el-button size="mini" @click="collapseToDepth(1)">只展开1层</el-button>
+            <el-button size="mini" @click="collapseToDepth(2)">展开2层</el-button>
+          </div>
           <div v-for="(tree, idx) in chainForest" :key="idx" class="text-chain-tree">
             <div
               v-for="row in flattenTree(tree)"
@@ -100,7 +106,13 @@
               class="text-chain-row"
               :style="{ paddingLeft: (row.depth * 24 + 8) + 'px' }"
             >
-              <span v-if="row.depth > 0" class="text-chain-indent" :class="{ 'text-chain-indent-live': row._edgeSource === 'live' }">└─</span>
+              <span
+                v-if="row.childCount > 0"
+                class="text-chain-toggle"
+                @click="toggleCollapse(row.id)"
+              >{{ collapsedNodes[row.id] ? '▶' : '▼' }}</span>
+              <span v-else-if="row.depth > 0" class="text-chain-indent" :class="{ 'text-chain-indent-live': row._edgeSource === 'live' }">└─</span>
+              <span v-else class="text-chain-indent-placeholder"></span>
               <span class="text-chain-type" :class="'tc-' + row.type">{{ row.typeLabel }}</span>
               <span class="text-chain-name" :title="row.instance">{{ row.displayName }}</span>
               <span class="text-chain-ip">({{ row.id }})</span>
@@ -109,6 +121,11 @@
                 v-for="s in row.services" :key="s.msg_label"
                 size="mini" type="info" style="margin-left:4px"
               >{{ s.msg_label }}</el-tag>
+              <span
+                v-if="collapsedNodes[row.id] && row.childCount > 0"
+                class="text-chain-collapsed-badge"
+                @click="toggleCollapse(row.id)"
+              >{{ row.childCount }} 个子节点已收起</span>
               <el-popover
                 v-if="liveByForwarder[row.id] && liveByForwarder[row.id].length > 0"
                 placement="right"
@@ -388,6 +405,9 @@ export default {
 
       // 拖拽状态
       _drag: null,   // { type: 'canvas' | 'node', nodeId?, startX, startY, origPanX?, origPanY?, origDx?, origDy? }
+
+      // 文字链路折叠状态 { nodeId: true }
+      collapsedNodes: {},
     }
   },
   computed: {
@@ -604,6 +624,7 @@ export default {
         this.svgReady = false
         this.selectedEdgeIndex = null
         this.nodeOverrides = {}
+        this.collapsedNodes = {}
         this.$nextTick(() => { this.svgReady = true })
       }
     },
@@ -784,21 +805,70 @@ export default {
       return inst.length > 20 ? inst.slice(0, 18) + '…' : inst
     },
 
-    /** 将树递归展平为 [{...node, depth, typeLabel, displayName}, ...] */
+    /** 将树递归展平为 [{...node, depth, typeLabel, displayName, childCount}, ...] */
     flattenTree(tree, depth = 0) {
       if (!tree) return []
       const typeLabels = { external: '接收机(外部)', receiver: '接收机', forwarder: '转发机', aggregator: '聚合转发' }
+      const children = tree.children || []
       const row = {
         ...tree,
         depth,
         typeLabel: typeLabels[tree.type] || tree.type,
         displayName: this.nodeDisplayName(tree),
+        childCount: this._countDescendants(tree),
       }
       const rows = [row]
-      for (const child of (tree.children || [])) {
-        rows.push(...this.flattenTree(child, depth + 1))
+      // 如果该节点被收起，跳过所有子节点
+      if (!this.collapsedNodes[tree.id]) {
+        for (const child of children) {
+          rows.push(...this.flattenTree(child, depth + 1))
+        }
       }
       return rows
+    },
+
+    /** 递归统计后代节点总数 */
+    _countDescendants(tree) {
+      if (!tree || !tree.children || !tree.children.length) return 0
+      let count = tree.children.length
+      for (const child of tree.children) {
+        count += this._countDescendants(child)
+      }
+      return count
+    },
+
+    toggleCollapse(nodeId) {
+      this.$set(this.collapsedNodes, nodeId, !this.collapsedNodes[nodeId])
+    },
+
+    collapseAll() {
+      const collapsed = {}
+      const walk = (tree) => {
+        if (!tree) return
+        if (tree.children && tree.children.length) {
+          collapsed[tree.id] = true
+          tree.children.forEach(walk)
+        }
+      }
+      this.chainForest.forEach(walk)
+      this.collapsedNodes = collapsed
+    },
+
+    expandAll() {
+      this.collapsedNodes = {}
+    },
+
+    collapseToDepth(maxDepth) {
+      const collapsed = {}
+      const walk = (tree, depth) => {
+        if (!tree) return
+        if (tree.children && tree.children.length) {
+          if (depth >= maxDepth) collapsed[tree.id] = true
+          tree.children.forEach(c => walk(c, depth + 1))
+        }
+      }
+      this.chainForest.forEach(t => walk(t, 0))
+      this.collapsedNodes = collapsed
     },
   },
 }
@@ -1014,5 +1084,45 @@ export default {
 }
 .text-chain-indent-live {
   color: #67c23a !important;
+}
+.text-chain-indent-placeholder {
+  display: inline-block;
+  width: 18px;
+}
+.text-chain-toolbar {
+  margin-bottom: 10px;
+  padding: 0 8px;
+  display: flex;
+  gap: 6px;
+}
+.text-chain-toggle {
+  display: inline-block;
+  width: 18px;
+  text-align: center;
+  cursor: pointer;
+  color: #909399;
+  font-size: 10px;
+  user-select: none;
+  transition: color 0.15s;
+}
+.text-chain-toggle:hover {
+  color: #409eff;
+}
+.text-chain-collapsed-badge {
+  margin-left: 8px;
+  font-size: 11px;
+  color: #909399;
+  background: #f4f4f5;
+  border: 1px solid #e9e9eb;
+  border-radius: 10px;
+  padding: 0 8px;
+  cursor: pointer;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  transition: all 0.15s;
+}
+.text-chain-collapsed-badge:hover {
+  color: #409eff;
+  border-color: #c6e2ff;
+  background: #ecf5ff;
 }
 </style>

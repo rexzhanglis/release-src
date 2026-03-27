@@ -673,13 +673,22 @@ def rebuild_chain_index(msg_key, config_map=None):
     chain_result = build_chain(service_id, msg_id, config_map=config_map)
     elapsed_ms = int((time.monotonic() - t0) * 1000)
 
-    MsgChainIndex.objects.update_or_create(
-        msg_key=msg_key,
-        defaults={
-            'chain_json': chain_result,
-            'build_ms': elapsed_ms,
-        },
-    )
+    for attempt in range(3):
+        try:
+            MsgChainIndex.objects.update_or_create(
+                msg_key=msg_key,
+                defaults={
+                    'chain_json': chain_result,
+                    'build_ms': elapsed_ms,
+                },
+            )
+            break
+        except Exception as e:
+            if attempt < 2 and 'lock' in str(e).lower():
+                time.sleep(1 + attempt)
+                close_old_connections()
+            else:
+                raise
 
 
 def _build_full_config_map():

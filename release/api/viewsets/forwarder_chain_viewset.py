@@ -532,15 +532,12 @@ def build_chain(service_id, msg_id, config_map=None):
                 else:
                     # 内部机器（转发机或接收机）
                     # 修复 B：上游消息验证
-                    # 验证上游配置确实包含目标消息。如果上游配置中没有该消息，说明下游的引用有误或已过期，跳过。
+                    # 验证上游配置确实包含目标消息。如果上游配置中没有该消息：
+                    # - 可能是下游的引用有误或已过期
+                    # - 也可能是该机器是消息的产生源头（自产消息，不订阅上游）
                     # 接收机不受此检查影响（接收机从交易所接收全量数据，其 UpStreams 通常为空或指向外部）。
                     up_content = upstream_cf.content or {}
                     is_receiver = _is_receiver_cf(upstream_cf)
-                    if not is_receiver:
-                        up_valid_entries = _get_upstreams_from_content(up_content, service_id, msg_id)
-                        if not up_valid_entries:
-                            continue
-
                     up_ip_real = _cf_ip(upstream_cf) or up_ip  # 解析失败时用上游地址里的 IP
                     if is_receiver:
                         up_type = 'receiver'
@@ -553,6 +550,15 @@ def build_chain(service_id, msg_id, config_map=None):
                         up_st_name = upstream_cf.instance.service_type.name or ''
                     except Exception:
                         up_st_name = ''
+
+                    if not is_receiver:
+                        up_valid_entries = _get_upstreams_from_content(up_content, service_id, msg_id)
+                        if not up_valid_entries:
+                            # 该机器出现在下游的订阅配置中，但自身没有向上游订阅该消息。
+                            # 说明它是消息源头（自产消息），仍应出现在链路中，不再继续向上追溯。
+                            get_or_create_node(up_ip_real, upstream_cf.instance.name, up_type, matched_svcs, up_st_name)
+                            add_edge(up_ip_real, this_ip, matched_svcs)
+                            continue
                     get_or_create_node(up_ip_real, upstream_cf.instance.name, up_type, matched_svcs, up_st_name)
                     add_edge(up_ip_real, this_ip, matched_svcs)
 

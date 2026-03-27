@@ -279,4 +279,5 @@ DATABASES = {
 
 CRONJOBS = [
     ('*/5 * * * *', 'mdl.tasks.refresh_systemd_cache'),
+    ('*/10 * * * *', 'mdl.tasks.sync_config_from_gitlab'),
 ]

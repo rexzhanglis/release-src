@@ -238,6 +238,34 @@ def refresh_systemd_cache():
             )
 
 
+@cron_log
+def sync_config_from_gitlab():
+    """
+    定时从 GitLab 同步配置文件到数据库。
+    解决配置在 Git 更新后数据库未同步导致链路数据过期的问题。
+
+    django_crontab 配置（settings.py）：
+        ('*/10 * * * *', 'mdl.tasks.sync_config_from_gitlab')
+    """
+    from django.db import close_old_connections
+    close_old_connections()
+
+    try:
+        from api.viewsets.config_mgmt_viewset import _sync_from_gitlab
+        result = _sync_from_gitlab()
+        cron_logger.info(
+            f'[ConfigSync] GitLab 同步完成: '
+            f'service_types={result["service_types"]} '
+            f'instances={result["instances"]} '
+            f'configs={result["configs"]}'
+        )
+        # 注意：ConfigFile 的 post_save signal 会自动触发链路索引重建，
+        # 所以这里不需要手动调用 rebuild_all_chain_indexes()
+    except Exception as e:
+        cron_logger.error(f'[ConfigSync] GitLab 同步失败: {e}')
+        raise
+
+
 if __name__ == '__main__':
     # check_mdl_service_task()
     check_config_git_url_task()

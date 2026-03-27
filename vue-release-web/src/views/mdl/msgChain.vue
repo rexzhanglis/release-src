@@ -78,6 +78,7 @@
               <span class="legend-dot" style="background:#409eff"></span><span class="legend-text">转发机</span>
               <span class="legend-dot" style="background:#67c23a"></span><span class="legend-text">聚合转发</span>
               <span class="legend-dot" style="background:#9c27b0"></span><span class="legend-text">上证云</span>
+              <span class="legend-line-dash"></span><span class="legend-text">心跳连接</span>
               <el-tooltip content="滚轮缩放 · 拖空白区域平移 · 拖节点移动" placement="top">
                 <i class="el-icon-info" style="color:#909399;cursor:help" />
               </el-tooltip>
@@ -99,17 +100,54 @@
               class="text-chain-row"
               :style="{ paddingLeft: (row.depth * 24 + 8) + 'px' }"
             >
-              <span v-if="row.depth > 0" class="text-chain-indent">└─</span>
+              <span v-if="row.depth > 0" class="text-chain-indent" :class="{ 'text-chain-indent-live': row._edgeSource === 'live' }">└─</span>
               <span class="text-chain-type" :class="'tc-' + row.type">{{ row.typeLabel }}</span>
               <span class="text-chain-name" :title="row.instance">{{ row.displayName }}</span>
               <span class="text-chain-ip">({{ row.id }})</span>
+              <el-tag v-if="row._edgeSource === 'live'" size="mini" type="success" style="margin-left:4px">心跳</el-tag>
               <el-tag
                 v-for="s in row.services" :key="s.msg_label"
                 size="mini" type="info" style="margin-left:4px"
               >{{ s.msg_label }}</el-tag>
-              <span v-if="liveByForwarder[row.id] && liveByForwarder[row.id].length > 0" class="text-chain-live">
-                <i class="el-icon-user" /> {{ liveByForwarder[row.id].length }} 个下游
-              </span>
+              <el-popover
+                v-if="liveByForwarder[row.id] && liveByForwarder[row.id].length > 0"
+                placement="right"
+                width="380"
+                trigger="click"
+                popper-class="client-popover"
+              >
+                <div class="client-pop-header">
+                  <i class="el-icon-connection" style="color:#67c23a" />
+                  {{ row.id }} 的下游客户端（{{ liveByForwarder[row.id].length }} 个）
+                </div>
+                <el-table
+                  :data="liveByForwarder[row.id]"
+                  border size="mini"
+                  max-height="280"
+                  style="margin-top:8px"
+                >
+                  <el-table-column label="客户端地址" min-width="140" show-overflow-tooltip>
+                    <template slot-scope="{ row: r }">
+                      <span class="mono">{{ r.client_address }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="连接时间" width="100">
+                    <template slot-scope="{ row: r }">
+                      <span style="font-size:10px;color:#909399">{{ r.start_date }}<br>{{ r.start_time }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="积压" width="60" align="right">
+                    <template slot-scope="{ row: r }">
+                      <span :style="{ color: r.pending_bytes > 0 ? '#e6a23c' : '#67c23a', fontSize: '11px' }">
+                        {{ r.pending_bytes }}
+                      </span>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <span slot="reference" class="text-chain-live text-chain-live-click">
+                  <i class="el-icon-user" /> {{ liveByForwarder[row.id].length }} 个下游
+                </span>
+              </el-popover>
             </div>
           </div>
           <div v-if="chainForest.length === 0" class="empty-tip">无链路数据</div>
@@ -151,6 +189,12 @@
                 <marker id="arrow-gray-sel" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
                   <path d="M0,0 L0,6 L8,3 z" fill="#606266" />
                 </marker>
+                <marker id="arrow-green" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                  <path d="M0,0 L0,6 L8,3 z" fill="#67c23a" />
+                </marker>
+                <marker id="arrow-green-sel" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                  <path d="M0,0 L0,6 L8,3 z" fill="#4caf50" />
+                </marker>
               </defs>
               <!-- 透明宽热区 -->
               <path
@@ -170,6 +214,7 @@
                 :d="edge.d"
                 :stroke="selectedEdgeIndex === i ? edge.selectedColor : edge.color"
                 :stroke-width="selectedEdgeIndex === i ? 3 : 1.5"
+                :stroke-dasharray="edge.dashArray"
                 fill="none"
                 :marker-end="selectedEdgeIndex === i ? edge.selectedMarkerEnd : edge.markerEnd"
                 :opacity="selectedEdgeIndex === i ? 1 : 0.7"
@@ -486,18 +531,21 @@ export default {
         const fromNode = this.result.nodes[e.from]
         const toNode   = this.result.nodes[e.to]
         const isExternal = fromNode && fromNode.type === 'external'
+        const isLive = e.source === 'live'
         const labelOf = n => (n && n.instance && n.instance !== n.id) ? n.instance : (n ? n.id : '')
 
         return {
           d, mx, my,
           fromId: e.from, toId: e.to,
-          fromLabel: labelOf(fromNode),
+          fromLabel: labelOf(fromNode) + (isLive ? ' [心跳]' : ''),
           toLabel: labelOf(toNode),
           services: e.services || [],
-          color: isExternal ? '#c0c4cc' : '#409eff',
-          selectedColor: isExternal ? '#606266' : '#1565c0',
-          markerEnd: isExternal ? 'url(#arrow-gray)' : 'url(#arrow-blue)',
-          selectedMarkerEnd: isExternal ? 'url(#arrow-gray-sel)' : 'url(#arrow-blue-sel)',
+          source: e.source || 'config',
+          color: isLive ? '#67c23a' : (isExternal ? '#c0c4cc' : '#409eff'),
+          selectedColor: isLive ? '#4caf50' : (isExternal ? '#606266' : '#1565c0'),
+          markerEnd: isLive ? 'url(#arrow-green)' : (isExternal ? 'url(#arrow-gray)' : 'url(#arrow-blue)'),
+          selectedMarkerEnd: isLive ? 'url(#arrow-green-sel)' : (isExternal ? 'url(#arrow-gray-sel)' : 'url(#arrow-blue-sel)'),
+          dashArray: isLive ? '6,3' : '',
         }
       }).filter(Boolean)
     },
@@ -512,8 +560,9 @@ export default {
       const edges = this.result.edges || []
       if (!Object.keys(nodes).length) return []
 
-      // 构建 children map
+      // 构建 children map，记录边的来源（config/live）
       const childrenMap = {}
+      const edgeSourceMap = {}  // "from->to" => source
       const inDegree = {}
       for (const nid of Object.keys(nodes)) {
         childrenMap[nid] = []
@@ -522,25 +571,31 @@ export default {
       for (const e of edges) {
         if (childrenMap[e.from]) childrenMap[e.from].push(e.to)
         if (e.to in inDegree) inDegree[e.to]++
+        edgeSourceMap[e.from + '->' + e.to] = e.source || 'config'
       }
 
       // 根节点 = 入度为 0
       const roots = Object.keys(nodes).filter(id => (inDegree[id] || 0) === 0)
 
-      // 递归构建树
-      const buildTree = (nodeId, visited) => {
+      // 递归构建树，记录从父节点到子节点的边来源
+      const buildTree = (nodeId, visited, parentId) => {
         if (visited.has(nodeId)) return null
         visited.add(nodeId)
         const node = nodes[nodeId]
         if (!node) return null
+        const edgeSource = parentId ? (edgeSourceMap[parentId + '->' + nodeId] || 'config') : 'config'
         const kids = (childrenMap[nodeId] || [])
-          .map(cid => buildTree(cid, visited))
+          .map(cid => buildTree(cid, visited, nodeId))
           .filter(Boolean)
-          .sort((a, b) => (a.instance || '').localeCompare(b.instance || ''))
-        return { ...node, children: kids }
+          .sort((a, b) => {
+            // config 边排前面，live 边排后面
+            if (a._edgeSource !== b._edgeSource) return a._edgeSource === 'live' ? 1 : -1
+            return (a.instance || '').localeCompare(b.instance || '')
+          })
+        return { ...node, children: kids, _edgeSource: edgeSource }
       }
 
-      return roots.map(r => buildTree(r, new Set())).filter(Boolean)
+      return roots.map(r => buildTree(r, new Set(), null)).filter(Boolean)
     },
   },
   watch: {
@@ -769,6 +824,10 @@ export default {
 /* 图例 */
 .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .legend-text { font-size: 12px; color: #606266; }
+.legend-line-dash {
+  width: 18px; height: 0; border-top: 2px dashed #67c23a;
+  display: inline-block; vertical-align: middle; margin-right: 2px;
+}
 
 /* 画布容器：固定高度，超出隐藏，捕获鼠标 */
 .topo-scroll {
@@ -943,5 +1002,17 @@ export default {
   color: #67c23a;
   font-size: 11px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+.text-chain-live-click {
+  cursor: pointer;
+  border-bottom: 1px dashed #67c23a;
+  padding-bottom: 1px;
+}
+.text-chain-live-click:hover {
+  color: #4caf50;
+  border-bottom-color: #4caf50;
+}
+.text-chain-indent-live {
+  color: #67c23a !important;
 }
 </style>

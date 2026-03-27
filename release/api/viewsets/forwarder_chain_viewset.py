@@ -1081,6 +1081,30 @@ class ForwarderChainViewSet(viewsets.ViewSet):
         # search_heartbeat 实时查询，不缓存
         live_results, unreachable = search_heartbeat(service_id, msg_id)
 
+        # 将心跳发现的实时连接合并到 edges 中
+        # 目的：心跳显示 "5个下游" 但配置链路只有 4 条时，补充缺失的 live 边
+        import copy
+        merged_nodes = copy.deepcopy(chain_result.get('nodes', {}))
+        merged_edges = [dict(e, source='config') for e in chain_result.get('edges', [])]
+        existing_edge_set = {(e['from'], e['to']) for e in merged_edges}
+
+        for live_item in live_results:
+            fwd_ip = live_item.get('forwarder_ip', '')
+            client_addr = live_item.get('client_address', '')
+            # client_address 格式 "ip:port"，提取 IP
+            client_ip = client_addr.rsplit(':', 1)[0] if ':' in client_addr else client_addr
+            if not fwd_ip or not client_ip:
+                continue
+            # 仅当上游节点已知、下游节点已知、且无配置边时，添加 live 边
+            if fwd_ip in merged_nodes and client_ip in merged_nodes and (fwd_ip, client_ip) not in existing_edge_set:
+                merged_edges.append({
+                    'from': fwd_ip,
+                    'to': client_ip,
+                    'services': merged_nodes[client_ip].get('services', []),
+                    'source': 'live',
+                })
+                existing_edge_set.add((fwd_ip, client_ip))
+
         service_label = SERVICE_ID_MAP.get(service_id, '') if service_id else ''
 
         return ApiResponse(data={
@@ -1091,8 +1115,8 @@ class ForwarderChainViewSet(viewsets.ViewSet):
                 'service_label': service_label,
             },
             'chains': chain_result['chains'],
-            'nodes': chain_result['nodes'],
-            'edges': chain_result['edges'],
+            'nodes': merged_nodes,
+            'edges': merged_edges,
             'live': live_results,
             'unreachable': unreachable,
         })

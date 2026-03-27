@@ -260,23 +260,37 @@ def _parse_upstream_addrs(address_str):
 def _get_upstreams_from_content(content, service_id, msg_id):
     """
     从配置文件内容中提取包含目标消息的上游地址列表。
-    支持两种结构：
+    支持三种结构：
       1. 顶层 UpStreams: { "UpStreams": [...], "Publishers": [...] }
       2. 嵌套在 MSG_FORWARDER / TEAMING_HANDLER 下
+      3. 嵌套在 feeder_handler 包装层下: { "feeder_handler": { "MSG_FORWARDER": { "UpStreams": [...] } } }
     返回 [(address_str, matched_services), ...]
     """
     results = []
 
     # 收集所有 UpStreams 列表
-    # 实际结构：content['MSG_FORWARDER']['UpStreams'] 或 content['TEAMING_HANDLER']['UpStreams']
-    # 兼容直接挂顶层的情况
+    # 实际结构可能是：
+    #   content['MSG_FORWARDER']['UpStreams']
+    #   content['TEAMING_HANDLER']['UpStreams']
+    #   content['feeder_handler']['MSG_FORWARDER']['UpStreams']  （feeder_handler 包装层）
+    # 兼容直接挂在顶层的情况
     upstream_lists = []
-    for handler_key in ('MSG_FORWARDER', 'TEAMING_HANDLER'):
-        handler = content.get(handler_key, {})
-        if isinstance(handler, dict):
-            ups = handler.get('UpStreams', [])
-            if ups:
-                upstream_lists.append(ups)
+
+    # 收集所有可能包含 MSG_FORWARDER/TEAMING_HANDLER 的层级
+    sections_to_check = [content]
+    for wrapper_key in ('feeder_handler',):
+        wrapper = content.get(wrapper_key)
+        if isinstance(wrapper, dict):
+            sections_to_check.append(wrapper)
+
+    for section in sections_to_check:
+        for handler_key in ('MSG_FORWARDER', 'TEAMING_HANDLER'):
+            handler = section.get(handler_key, {})
+            if isinstance(handler, dict):
+                ups = handler.get('UpStreams', [])
+                if ups:
+                    upstream_lists.append(ups)
+
     # 兼容直接挂顶层
     if not upstream_lists and 'UpStreams' in content and isinstance(content['UpStreams'], list):
         upstream_lists.append(content['UpStreams'])
@@ -337,9 +351,14 @@ def _cf_ip(cf):
     return ip
 
 
-def build_chain(service_id, msg_id):
+def build_chain(service_id, msg_id, config_map=None):
     """
     构建消息转发的拓扑图（DAG）。
+
+    参数：
+      config_map: 可选，预构建的配置映射元组
+        (ip_to_cf, ip_port_to_cf, port_to_cfs, handler_cfs, receiver_ip_set, internal_ip_set, fqdn_to_ip)
+        传入后跳过重复加载，大幅提升批量重建性能。
 
     返回结构：
     {
@@ -359,20 +378,23 @@ def build_chain(service_id, msg_id):
       'chains': [...],   # 保留向后兼容的链路列表（用于前端展示）
     }
     """
-    ip_to_cf, ip_port_to_cf, port_to_cfs, all_cfs, receiver_ip_set = _build_ip_to_config_map()
+    if config_map is not None:
+        ip_to_cf, ip_port_to_cf, port_to_cfs, all_cfs, receiver_ip_set, internal_ip_set, fqdn_to_ip = config_map
+    else:
+        ip_to_cf, ip_port_to_cf, port_to_cfs, all_cfs, receiver_ip_set = _build_ip_to_config_map()
 
-    # 所有在 MdlServer 表里的 IP 都是内部机器，不应归为外部源
-    internal_ip_set = set(
-        MdlServer.objects.select_related('host').values_list('host__ip', flat=True)
-    ) | receiver_ip_set
+        # 所有在 MdlServer 表里的 IP 都是内部机器，不应归为外部源
+        internal_ip_set = set(
+            MdlServer.objects.select_related('host').values_list('host__ip', flat=True)
+        ) | receiver_ip_set
 
-    # 域名 -> IP 映射（fqdn/hostname -> ip），用于解析上游地址里写的是域名的情况
-    from mdl.models import Host
-    fqdn_to_ip = {
-        h.fqdn: h.ip
-        for h in Host.objects.all()
-        if h.fqdn and h.ip
-    }
+        # 域名 -> IP 映射（fqdn/hostname -> ip），用于解析上游地址里写的是域名的情况
+        from mdl.models import Host
+        fqdn_to_ip = {
+            h.fqdn: h.ip
+            for h in Host.objects.all()
+            if h.fqdn and h.ip
+        }
 
     nodes = {}   # node_id -> node_info
     edges = set()  # (from_id, to_id) 去重
@@ -432,7 +454,9 @@ def build_chain(service_id, msg_id):
         this_ip = _cf_ip(cf)
 
         # 判断节点类型：TEAMING_HANDLER 是聚合转发机，MSG_FORWARDER 是普通转发机
-        has_teaming = bool(content.get('TEAMING_HANDLER'))
+        # 兼容 feeder_handler 包装层
+        fh_wrapper = content.get('feeder_handler', {}) if isinstance(content.get('feeder_handler'), dict) else {}
+        has_teaming = bool(content.get('TEAMING_HANDLER') or fh_wrapper.get('TEAMING_HANDLER'))
         this_type = 'aggregator' if has_teaming else 'forwarder'
 
         upstream_entries = _get_upstreams_from_content(content, service_id, msg_id)
@@ -486,7 +510,7 @@ def build_chain(service_id, msg_id):
 
                 # 修复 C：所有索引均未命中时，遍历 handler_cfs 按 IP 精确匹配
                 if upstream_cf is None:
-                    for hc in handler_cfs:
+                    for hc in all_cfs:
                         if _cf_ip(hc) == up_ip:
                             upstream_cf = hc
                             break
@@ -520,7 +544,7 @@ def build_chain(service_id, msg_id):
                     up_ip_real = _cf_ip(upstream_cf) or up_ip  # 解析失败时用上游地址里的 IP
                     if is_receiver:
                         up_type = 'receiver'
-                    elif up_content.get('TEAMING_HANDLER'):
+                    elif up_content.get('TEAMING_HANDLER') or (isinstance(up_content.get('feeder_handler'), dict) and up_content['feeder_handler'].get('TEAMING_HANDLER')):
                         up_type = 'aggregator'
                     else:
                         up_type = 'forwarder'
@@ -600,26 +624,35 @@ def _collect_all_msg_keys():
         content = cf.content
         if not content or not isinstance(content, dict):
             continue
-        for handler_key in ('MSG_FORWARDER', 'TEAMING_HANDLER'):
-            handler = content.get(handler_key, {})
-            if not isinstance(handler, dict):
-                continue
-            for upstream in handler.get('UpStreams', []):
-                for svc in upstream.get('Services', []):
-                    svc_name = svc.get('Name', '')
-                    svc_id = SERVICE_NAME_TO_ID.get(svc_name)
-                    for msg_id in svc.get('Messages', []):
-                        if svc_id is not None:
-                            keys.add(f'{svc_id}.{msg_id}')
-                        else:
-                            keys.add(str(msg_id))
+        # 兼容 feeder_handler 包装层：content['feeder_handler']['MSG_FORWARDER'] 等
+        sections_to_check = [content]
+        wrapper = content.get('feeder_handler')
+        if isinstance(wrapper, dict):
+            sections_to_check.append(wrapper)
+        for section in sections_to_check:
+            for handler_key in ('MSG_FORWARDER', 'TEAMING_HANDLER'):
+                handler = section.get(handler_key, {})
+                if not isinstance(handler, dict):
+                    continue
+                for upstream in handler.get('UpStreams', []):
+                    for svc in upstream.get('Services', []):
+                        svc_name = svc.get('Name', '')
+                        svc_id = SERVICE_NAME_TO_ID.get(svc_name)
+                        for msg_id in svc.get('Messages', []):
+                            if svc_id is not None:
+                                keys.add(f'{svc_id}.{msg_id}')
+                            else:
+                                keys.add(str(msg_id))
     return keys
 
 
-def rebuild_chain_index(msg_key):
+def rebuild_chain_index(msg_key, config_map=None):
     """
     重建单条消息的链路索引，写入 MsgChainIndex 表。
     线程安全（update_or_create），可在后台线程中调用。
+
+    参数：
+      config_map: 可选，预构建的配置映射，传入后避免重复加载配置文件。
     """
     import time
     from mdl.models import MsgChainIndex
@@ -631,7 +664,7 @@ def rebuild_chain_index(msg_key):
 
     close_old_connections()
     t0 = time.monotonic()
-    chain_result = build_chain(service_id, msg_id)
+    chain_result = build_chain(service_id, msg_id, config_map=config_map)
     elapsed_ms = int((time.monotonic() - t0) * 1000)
 
     MsgChainIndex.objects.update_or_create(
@@ -641,6 +674,25 @@ def rebuild_chain_index(msg_key):
             'build_ms': elapsed_ms,
         },
     )
+
+
+def _build_full_config_map():
+    """
+    一次性构建 build_chain 所需的全部映射数据，供批量重建复用。
+    返回 7 元组：(ip_to_cf, ip_port_to_cf, port_to_cfs, handler_cfs, receiver_ip_set, internal_ip_set, fqdn_to_ip)
+    """
+    from mdl.models import Host
+
+    ip_to_cf, ip_port_to_cf, port_to_cfs, handler_cfs, receiver_ip_set = _build_ip_to_config_map()
+    internal_ip_set = set(
+        MdlServer.objects.select_related('host').values_list('host__ip', flat=True)
+    ) | receiver_ip_set
+    fqdn_to_ip = {
+        h.fqdn: h.ip
+        for h in Host.objects.all()
+        if h.fqdn and h.ip
+    }
+    return (ip_to_cf, ip_port_to_cf, port_to_cfs, handler_cfs, receiver_ip_set, internal_ip_set, fqdn_to_ip)
 
 
 def rebuild_all_chain_indexes():
@@ -662,13 +714,18 @@ def rebuild_all_chain_indexes():
         return 0
 
     logger.info(f'[ChainIndex] 共发现 {len(msg_keys)} 条消息，开始逐一重建')
+
+    # 一次性加载配置映射，所有消息共用，避免每条消息重复查库
+    close_old_connections()
+    config_map = _build_full_config_map()
+
     success, failed = 0, 0
     t_all = time.monotonic()
 
     for msg_key in sorted(msg_keys):
         try:
             close_old_connections()
-            rebuild_chain_index(msg_key)
+            rebuild_chain_index(msg_key, config_map=config_map)
             success += 1
         except Exception as e:
             logger.error(f'[ChainIndex] 重建 {msg_key} 失败: {e}')

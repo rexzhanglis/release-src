@@ -629,6 +629,7 @@ def rebuild_chain_index(msg_key):
         return
     service_id, msg_id = parsed
 
+    close_old_connections()
     t0 = time.monotonic()
     chain_result = build_chain(service_id, msg_id)
     elapsed_ms = int((time.monotonic() - t0) * 1000)
@@ -666,6 +667,7 @@ def rebuild_all_chain_indexes():
 
     for msg_key in sorted(msg_keys):
         try:
+            close_old_connections()
             rebuild_chain_index(msg_key)
             success += 1
         except Exception as e:

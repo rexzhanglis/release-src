@@ -166,12 +166,13 @@ class ReleaseDetail(TimestampedModel):
     log = models.TextField(null=True, blank=True)
     active = models.IntegerField("流程图当前发布的位置", default=1)
 
-    def set_log(self, log, user, level="info"):
+    def set_log(self, log, user, level="info", update_prompt=True):
         if self.log:
             self.log = self.log + "{} {} {} {}".format(str(datetime.datetime.now()), level, user, log) + "\n"
         else:
             self.log = "{} {} {} {}".format(str(datetime.datetime.now()), level, user, log) + "\n"
-        self.prompt = log
+        if update_prompt:
+            self.prompt = log
         self.save()
 
     def set_status(self, status):

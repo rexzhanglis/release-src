@@ -321,7 +321,7 @@ class MdlReleaseDetailService(ReleaseDetailService):
         """
         mdl_server = MdlServer.objects.select_related('host').get(host__fqdn=server, service_name=service_name)
         ip = mdl_server.host.ip
-        self.release_detail.set_log("开始抓取{}_{}_{}日志信息....".format(server, ip, service_name), self.user)
+        self.release_detail.set_log("开始抓取{}_{}_{}日志信息....".format(server, ip, service_name), self.user, update_prompt=False)
         time.sleep(15)
         username = Constance.get_value("ansible_ssh_user")
         password = Constance.get_value("ansible_ssh_pass")
@@ -329,7 +329,7 @@ class MdlReleaseDetailService(ReleaseDetailService):
         ssh = SshClient(ip=ip, username=username, password=password)
         log_file = self._resolve_log_file(install_dir, mdl_server.consul_files, ssh)
         log_name = log_file.split("/")[-1]
-        self.release_detail.set_log("读取日志文件：{}".format(log_file), self.user)
+        self.release_detail.set_log("读取日志文件：{}".format(log_file), self.user, update_prompt=False)
         cmd = """grep -a $(date '+%Y-%m-%d') {} | awk -v dt="$(date '+%Y-%m-%d %T' -d '-1 minutes')" -F, '$1 > dt'""".format(
             log_file)
         res = ssh.send_cmd(cmd)

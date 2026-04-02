@@ -175,6 +175,9 @@
             />
           </el-select>
         </el-form-item>
+        <el-form-item v-if="form.type==='version' && form.selectList.length > 0" label="发布版本">
+          <span style="color: #606266; font-size: 14px">{{ form.selectList[0].release_version }}</span>
+        </el-form-item>
         <el-form-item label="发布对象" prop="release_object">
           <el-select
             v-model="form.release_object"

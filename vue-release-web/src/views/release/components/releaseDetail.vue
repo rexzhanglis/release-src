@@ -53,8 +53,7 @@
               <el-step
                 v-for="item in moduleList"
                 :key="item.release_object"
-                :title="formatStepTitle(item.release_object)"
-                :description="formatStepDesc(item)"
+                :title="formatDisplayName(item)"
                 :status="item.status"
               />
             </el-steps>
@@ -83,13 +82,11 @@
             style="margin-top: 1.5%; width: 100%"
           >
             <el-table-column label="序号" prop="index" width="60" align="center" />
-            <el-table-column label="发布对象" min-width="160">
+            <el-table-column label="发布对象" min-width="220">
               <template slot-scope="{ row }">
-                <div>{{ parseObject(row.release_object).service }}</div>
-                <div style="color: #909399; font-size: 11px">{{ parseObject(row.release_object).ip }}</div>
+                <span>{{ formatDisplayName(row) }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="角色" prop="role_name" min-width="120" />
             <el-table-column label="状态" width="100" align="center">
               <template slot-scope="{ row }">
                 <el-tag
@@ -182,16 +179,17 @@ export default {
     handle(url) {
       window.open(url, '_blank')
     },
-    formatStepDesc(item) {
-      return item.role_name || ''
-    },
-    formatStepTitle(releaseObject) {
-      if (!releaseObject) return ''
-      const parts = releaseObject.split('__')
+    formatDisplayName(item) {
+      if (!item || !item.release_object) return ''
+      const parts = item.release_object.split('__')
       if (parts.length === 3) {
-        return parts[2] + '\n' + parts[1]
+        const segments = []
+        if (item.role_name) segments.push(item.role_name)
+        segments.push(parts[1])   // ip
+        segments.push(parts[2])   // service_name
+        return segments.join('__')
       }
-      return releaseObject
+      return item.release_object
     },
     parseObject(releaseObject) {
       if (!releaseObject) return { service: '', ip: '' }

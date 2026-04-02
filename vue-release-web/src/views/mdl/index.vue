@@ -206,6 +206,7 @@
                 width="80px"
               />
               <el-table-column v-if="form.type==='version'" prop="release_version" label="发布版本"/>
+              <el-table-column prop="role_name" label="角色" width="140px"/>
               <el-table-column prop="release_object" label="发布对象"/>
               <el-table-column v-if="form.type==='version'" label="可执行文件" width="160px">
                 <template slot-scope="{row}">
@@ -249,6 +250,7 @@
             </el-link>
           </template>
         </el-table-column>
+        <el-table-column prop="role_name" label="角色"/>
         <el-table-column prop="release_object" label="发布对象"/>
         <el-table-column prop="release_version" label="发布版本"/>
       </el-table>
@@ -321,6 +323,7 @@ export default {
       },
       releaseObjectOptions: [],
       serverExecutable: {},
+      serverRole: {},
       projectOptions: [],
       parentId: 0,
       value1: null,
@@ -400,6 +403,7 @@ export default {
               temp.release_object = item
               temp.config_file = ''
               temp.executable = this.serverExecutable[item] || 'feeder_handler'
+              temp.role_name = this.serverRole[item] || ''
               this.form.selectList.push(temp)
             })
           })
@@ -408,6 +412,7 @@ export default {
             const temp = {}
             temp.release_object = item
             temp.config_file = ''
+            temp.role_name = this.serverRole[item] || ''
             this.form.selectList.push(temp)
           })
         }
@@ -440,6 +445,7 @@ export default {
         this.releaseObjectOptions = response.data.release_object
         this.labelToServer = response.data.label_to_server
         this.serverExecutable = response.data.server_executable || {}
+        this.serverRole = response.data.server_role || {}
       })
       this.dialogFormVisible = true
       this.$nextTick(() => {
@@ -514,6 +520,7 @@ export default {
         this.releaseObjectOptions = response.data.release_object
         this.labelToServer = response.data.label_to_server
         this.serverExecutable = response.data.server_executable || {}
+        this.serverRole = response.data.server_role || {}
       })
       this.dialogFormVisible = true
     },

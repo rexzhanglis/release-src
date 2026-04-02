@@ -16,6 +16,7 @@ from api.permissions.edit_permission import ReleasePlanEditPermission
 from common.pagination import CustomPagination
 from common.utils.apiutil import ApiResponse
 from const.models import Constance
+from mdl.models import MdlServer
 
 
 class ReleasePlanSerializer(serializers.ModelSerializer):
@@ -71,10 +72,17 @@ class ReleasePlanViewSet(viewsets.ModelViewSet):
             detail_map[d.release_plan_id] = d
         # 批量查询 release contents
         if type == 'MDL':
+            # 构建 role_name 映射
+            role_map = {}
+            for obj in MdlServer.objects.select_related('host').all():
+                key = obj.host.fqdn + "__" + obj.host.ip + "__" + obj.service_name
+                if obj.role_name:
+                    role_map[key] = obj.role_name
             contents_map = {}
             for c in MdlReleaseContent.objects.filter(release_plan_id__in=plan_ids).values(
                     "release_plan_id", "index", "issue_key", "release_version",
                     "release_object", "config_file", "type", "status", "executable"):
+                c["role_name"] = role_map.get(c["release_object"], "")
                 contents_map.setdefault(c["release_plan_id"], []).append(c)
         else:
             contents_map = {}

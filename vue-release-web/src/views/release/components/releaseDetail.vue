@@ -54,7 +54,7 @@
                 v-for="item in moduleList"
                 :key="item.release_object"
                 :title="formatStepTitle(item.release_object)"
-                :description="item.release_version"
+                :description="formatStepDesc(item)"
                 :status="item.status"
               />
             </el-steps>
@@ -89,6 +89,7 @@
                 <div style="color: #909399; font-size: 11px">{{ parseObject(row.release_object).ip }}</div>
               </template>
             </el-table-column>
+            <el-table-column label="角色" prop="role_name" min-width="120" />
             <el-table-column label="版本" prop="release_version" min-width="140" />
             <el-table-column label="状态" width="100" align="center">
               <template slot-scope="{ row }">
@@ -182,6 +183,12 @@ export default {
     handle(url) {
       window.open(url, '_blank')
     },
+    formatStepDesc(item) {
+      const parts = []
+      if (item.role_name) parts.push(item.role_name)
+      if (item.release_version) parts.push(item.release_version)
+      return parts.join('\n')
+    },
     formatStepTitle(releaseObject) {
       if (!releaseObject) return ''
       const parts = releaseObject.split('__')
@@ -234,7 +241,8 @@ export default {
             this.rawModuleList.push({
               'release_version': item.release_version,
               'status': item.status,
-              'release_object': item.release_object
+              'release_object': item.release_object,
+              'role_name': item.role_name || ''
             })
           })
         } else {
@@ -257,7 +265,8 @@ export default {
               temp.push({
                 'release_version': item.release_version,
                 'status': item.status,
-                'release_object': item.release_object
+                'release_object': item.release_object,
+                'role_name': item.role_name || ''
               })
             })
             this.rawModuleList = temp

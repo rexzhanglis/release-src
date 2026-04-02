@@ -26,10 +26,26 @@ class ReleasePlan(TimestampedModel):
     category = models.CharField("发布类型", max_length=20, null=True, default="正常发布")
     is_auto = models.BooleanField("自动发布", default=False)
 
+    @staticmethod
+    def _build_role_lookup():
+        """构建 release_object -> role_name 的映射"""
+        from mdl.models import MdlServer
+        role_map = {}
+        for obj in MdlServer.objects.select_related('host').all():
+            key = obj.host.fqdn + "__" + obj.host.ip + "__" + obj.service_name
+            if obj.role_name:
+                role_map[key] = obj.role_name
+        return role_map
+
     def get_all_release_contents(self):
         if self.project == 'MDL':
-            return list(self.mdlreleasecontent_set.all().values("index", "issue_key", "release_version", "release_object",
-                                                                "config_file", "type", "status", "executable"))
+            contents = list(self.mdlreleasecontent_set.all().values(
+                "index", "issue_key", "release_version", "release_object",
+                "config_file", "type", "status", "executable"))
+            role_map = self._build_role_lookup()
+            for c in contents:
+                c["role_name"] = role_map.get(c["release_object"], "")
+            return contents
         return list(
             self.releasecontent_set.all().values("index", "issue_key", "release_version", "rancher_app_version",
                                                  "config_file", "status"))
@@ -46,7 +62,12 @@ class ReleasePlan(TimestampedModel):
 
     def get_all_release_contents_status(self):
         if self.project == 'MDL':
-            return self.mdlreleasecontent_set.all().values("index", "release_version", "release_object", "status")
+            contents = list(self.mdlreleasecontent_set.all().values(
+                "index", "release_version", "release_object", "status"))
+            role_map = self._build_role_lookup()
+            for c in contents:
+                c["role_name"] = role_map.get(c["release_object"], "")
+            return contents
         return list(
             self.releasecontent_set.all().values("index", "release_version", "rancher_app_version", "status"))
 

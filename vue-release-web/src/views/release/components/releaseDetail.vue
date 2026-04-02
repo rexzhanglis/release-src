@@ -184,10 +184,7 @@ export default {
       window.open(url, '_blank')
     },
     formatStepDesc(item) {
-      const parts = []
-      if (item.role_name) parts.push(item.role_name)
-      if (item.release_version) parts.push(item.release_version)
-      return parts.join('\n')
+      return item.role_name || ''
     },
     formatStepTitle(releaseObject) {
       if (!releaseObject) return ''

@@ -205,9 +205,8 @@
                 label="发布顺序"
                 width="80px"
               />
-              <el-table-column v-if="form.type==='version'" prop="release_version" label="发布版本"/>
               <el-table-column prop="role_name" label="角色" width="140px"/>
-              <el-table-column prop="release_object" label="发布对象"/>
+              <el-table-column prop="release_object" label="发布对象" min-width="200px"/>
               <el-table-column v-if="form.type==='version'" label="可执行文件" width="160px">
                 <template slot-scope="{row}">
                   <el-select v-model="row.executable" size="mini" placeholder="选择可执行文件">
@@ -251,8 +250,7 @@
           </template>
         </el-table-column>
         <el-table-column prop="role_name" label="角色"/>
-        <el-table-column prop="release_object" label="发布对象"/>
-        <el-table-column prop="release_version" label="发布版本"/>
+        <el-table-column prop="release_object" label="发布对象" min-width="200px"/>
       </el-table>
     </el-dialog>
   </div>

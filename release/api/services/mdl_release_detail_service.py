@@ -47,7 +47,12 @@ class MdlReleaseDetailService(ReleaseDetailService):
         import threading
         from django.db import connection
 
-        UPGRADE_TIMEOUT = 600  # 每次 upgrade 最多等待 10 分钟
+        # 动态超时：每台机器预留 5 分钟（可在 Constance 中配置 mdl_deploy_timeout_per_machine），至少 10 分钟
+        try:
+            timeout_per_machine = int(Constance.get_value("mdl_deploy_timeout_per_machine"))
+        except Exception:
+            timeout_per_machine = 300
+        UPGRADE_TIMEOUT = max(600, len(list(modules)) * timeout_per_machine)
 
         self.release_detail.set_status("发布中")
 

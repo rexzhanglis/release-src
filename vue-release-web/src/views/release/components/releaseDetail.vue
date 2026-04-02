@@ -40,7 +40,8 @@
               <el-button :disabled="!isFail" type="primary" @click="failRetry()">失败重试</el-button>
             </el-col>
           </el-row>
-          <div class="steps-scroll-wrapper" style="margin-top: 1.5%">
+          <!-- 机器数量少时用步骤图，多时用表格 -->
+          <div v-if="moduleList.length <= 8" class="steps-scroll-wrapper" style="margin-top: 1.5%">
             <el-steps
               v-if="this.taskDetail.project === 'MDL'"
               :space="200"
@@ -73,6 +74,31 @@
               />
             </el-steps>
           </div>
+          <!-- 机器数量多时用紧凑表格 -->
+          <el-table
+            v-else
+            :data="moduleList"
+            size="mini"
+            border
+            style="margin-top: 1.5%; width: 100%"
+          >
+            <el-table-column label="序号" prop="index" width="60" align="center" />
+            <el-table-column label="发布对象" min-width="160">
+              <template slot-scope="{ row }">
+                <div>{{ parseObject(row.release_object).service }}</div>
+                <div style="color: #909399; font-size: 11px">{{ parseObject(row.release_object).ip }}</div>
+              </template>
+            </el-table-column>
+            <el-table-column label="版本" prop="release_version" min-width="140" />
+            <el-table-column label="状态" width="100" align="center">
+              <template slot-scope="{ row }">
+                <el-tag
+                  size="mini"
+                  :type="statusTagType(row.status)"
+                >{{ statusLabel(row.status) }}</el-tag>
+              </template>
+            </el-table-column>
+          </el-table>
         </el-collapse-item>
         <el-collapse-item name="2">
           <span slot="title" class="collapse-title">日志</span>
@@ -110,11 +136,15 @@ export default {
       // 强制设置最小宽度，使 el-steps 实际溢出父容器，触发横向滚动
       const minWidth = this.moduleList.length * 200
       return { minWidth: minWidth + 'px' }
+    },
+    // 给表格模式补充 index 字段
+    moduleList() {
+      return this._moduleList.map((item, i) => ({ ...item, index: i + 1 }))
     }
   },
   data() {
     return {
-      moduleList: [],
+      _moduleList: [],
       list: null,
       fullList: null,
       total: null,
@@ -153,13 +183,26 @@ export default {
       window.open(url, '_blank')
     },
     formatStepTitle(releaseObject) {
-      // release_object 格式: fqdn__ip__serviceName，提取关键信息缩短显示
       if (!releaseObject) return ''
       const parts = releaseObject.split('__')
       if (parts.length === 3) {
         return parts[2] + '\n' + parts[1]
       }
       return releaseObject
+    },
+    parseObject(releaseObject) {
+      if (!releaseObject) return { service: '', ip: '' }
+      const parts = releaseObject.split('__')
+      if (parts.length === 3) return { service: parts[2], ip: parts[1] }
+      return { service: releaseObject, ip: '' }
+    },
+    statusTagType(status) {
+      const map = { success: 'success', error: 'danger', process: 'warning', wait: 'info' }
+      return map[status] || 'info'
+    },
+    statusLabel(status) {
+      const map = { success: '成功', error: '失败', process: '发布中', wait: '等待' }
+      return map[status] || status || '等待'
     },
     editVisible() {
       // 当发布成功且大于一周后 所有按钮不可见 即也不能进行回滚操作
@@ -188,7 +231,7 @@ export default {
         this.taskDetail = response.data
         if (this.taskDetail.project === 'MDL') {
           this.taskDetail.release_contents.forEach(item => {
-            this.moduleList.push({
+            this._moduleList.push({
               'release_version': item.release_version,
               'status': item.status,
               'release_object': item.release_object
@@ -196,7 +239,7 @@ export default {
           })
         } else {
           this.taskDetail.release_contents.forEach(item => {
-            this.moduleList.push({'release_version': item.release_version, 'status': item.status})
+            this._moduleList.push({'release_version': item.release_version, 'status': item.status})
           })
         }
         this.getReleaseDetailInfo()
@@ -217,7 +260,7 @@ export default {
                 'release_object': item.release_object
               })
             })
-            this.moduleList = temp
+            this._moduleList = temp
             // 判断升级状态
             if (this.releaseDetail.status === '发布中' || this.releaseDetail.status === '升级中') {
               this.release_button = '暂停'

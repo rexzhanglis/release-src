@@ -43,8 +43,9 @@
           <div class="steps-scroll-wrapper" style="margin-top: 1.5%">
             <el-steps
               v-if="this.taskDetail.project === 'MDL'"
-              :space="stepsSpace"
+              :space="200"
               align-center
+              :style="stepsStyle"
               :active="releaseDetail.active-1"
               :process-status="processStatus"
             >
@@ -58,8 +59,9 @@
             </el-steps>
             <el-steps
               v-else
-              :space="stepsSpace"
+              :space="200"
               align-center
+              :style="stepsStyle"
               :active="releaseDetail.active-1"
               :process-status="processStatus"
             >
@@ -104,12 +106,10 @@ export default {
     ...mapGetters([
       'name'
     ]),
-    stepsSpace() {
-      // 当机器数量超过5台时，使用固定宽度使其可滚动；否则自适应
-      if (this.moduleList.length > 5) {
-        return 200
-      }
-      return undefined // 自适应
+    stepsStyle() {
+      // 强制设置最小宽度，使 el-steps 实际溢出父容器，触发横向滚动
+      const minWidth = this.moduleList.length * 200
+      return { minWidth: minWidth + 'px' }
     }
   },
   data() {

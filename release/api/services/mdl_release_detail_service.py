@@ -171,7 +171,13 @@ class MdlReleaseDetailService(ReleaseDetailService):
         if module.type == 'config':
             self.release_detail.set_log("{} consul 配置已拉取到目标机器 {}".format(module.release_object, srv.install_dir), self.user)
         self.release_detail.set_log(out, self.user)
-        self._get_upgrade_log(server_fqdn, service_name)
+        # 日志抓取异步执行，不阻塞主发布流程，失败只记录警告
+        import threading as _threading
+        _threading.Thread(
+            target=self._get_upgrade_log_safe,
+            args=(server_fqdn, service_name),
+            daemon=True,
+        ).start()
 
     def _rollback(self, modules):
         try:
@@ -292,6 +298,18 @@ class MdlReleaseDetailService(ReleaseDetailService):
         base = "/".join(install_dir.rstrip("/").split("/")[:-1])
         return "{}/logs/feeder_handler.log".format(base)
 
+    def _get_upgrade_log_safe(self, server, service_name):
+        """异步日志抓取，失败只打警告，不影响发布结果"""
+        try:
+            self._get_upgrade_log(server, service_name)
+        except Exception as e:
+            try:
+                self.release_detail.set_log(
+                    "日志抓取失败（不影响发布结果）：{}".format(e), self.user, level="error"
+                )
+            except Exception:
+                pass
+
     def _get_upgrade_log(self, server, service_name):
         """
         获取最近1分钟内的日志
@@ -299,7 +317,7 @@ class MdlReleaseDetailService(ReleaseDetailService):
         mdl_server = MdlServer.objects.select_related('host').get(host__fqdn=server, service_name=service_name)
         ip = mdl_server.host.ip
         self.release_detail.set_log("开始抓取{}_{}_{}日志信息....".format(server, ip, service_name), self.user)
-        time.sleep(30)
+        time.sleep(15)
         username = Constance.get_value("ansible_ssh_user")
         password = Constance.get_value("ansible_ssh_pass")
         install_dir = mdl_server.install_dir

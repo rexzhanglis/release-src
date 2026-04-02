@@ -90,7 +90,6 @@
               </template>
             </el-table-column>
             <el-table-column label="角色" prop="role_name" min-width="120" />
-            <el-table-column label="版本" prop="release_version" min-width="140" />
             <el-table-column label="状态" width="100" align="center">
               <template slot-scope="{ row }">
                 <el-tag

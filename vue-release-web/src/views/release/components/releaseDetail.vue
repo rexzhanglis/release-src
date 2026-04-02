@@ -134,17 +134,17 @@ export default {
     ]),
     stepsStyle() {
       // 强制设置最小宽度，使 el-steps 实际溢出父容器，触发横向滚动
-      const minWidth = this.moduleList.length * 200
+      const minWidth = this.rawModuleList.length * 200
       return { minWidth: minWidth + 'px' }
     },
     // 给表格模式补充 index 字段
     moduleList() {
-      return this._moduleList.map((item, i) => ({ ...item, index: i + 1 }))
+      return this.rawModuleList.map((item, i) => ({ ...item, index: i + 1 }))
     }
   },
   data() {
     return {
-      _moduleList: [],
+      rawModuleList: [],
       list: null,
       fullList: null,
       total: null,
@@ -231,7 +231,7 @@ export default {
         this.taskDetail = response.data
         if (this.taskDetail.project === 'MDL') {
           this.taskDetail.release_contents.forEach(item => {
-            this._moduleList.push({
+            this.rawModuleList.push({
               'release_version': item.release_version,
               'status': item.status,
               'release_object': item.release_object
@@ -239,7 +239,7 @@ export default {
           })
         } else {
           this.taskDetail.release_contents.forEach(item => {
-            this._moduleList.push({'release_version': item.release_version, 'status': item.status})
+            this.rawModuleList.push({'release_version': item.release_version, 'status': item.status})
           })
         }
         this.getReleaseDetailInfo()
@@ -260,7 +260,7 @@ export default {
                 'release_object': item.release_object
               })
             })
-            this._moduleList = temp
+            this.rawModuleList = temp
             // 判断升级状态
             if (this.releaseDetail.status === '发布中' || this.releaseDetail.status === '升级中') {
               this.release_button = '暂停'

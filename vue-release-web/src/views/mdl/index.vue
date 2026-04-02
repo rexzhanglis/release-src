@@ -175,8 +175,8 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="form.type==='version' && form.selectList.length > 0" label="发布版本">
-          <span style="color: #606266; font-size: 14px">{{ form.selectList[0].release_version }}</span>
+        <el-form-item v-if="form.type==='version' && releaseVersion" label="发布版本">
+          <span style="color: #606266; font-size: 14px">{{ releaseVersion }}</span>
         </el-form-item>
         <el-form-item label="发布对象" prop="release_object">
           <el-select
@@ -325,6 +325,7 @@ export default {
       releaseObjectOptions: [],
       serverExecutable: {},
       serverRole: {},
+      releaseVersion: '',
       projectOptions: [],
       parentId: 0,
       value1: null,
@@ -402,6 +403,7 @@ export default {
             return
           }
           getMdlReleaseIssueVersion({issue_key: this.form.issue_key}).then(response => {
+            this.releaseVersion = response.data
             select_release_object_list.forEach(item => {
               const temp = {}
               temp.release_version = response.data
@@ -443,6 +445,7 @@ export default {
       this.form.plan_release_time = ''
       this.form.release_object = ''
       this.form.type = 'version'
+      this.releaseVersion = ''
       getMdlReleaseIssueKey().then(response => {
         this.issueKeyOptions = response.data
       })
@@ -514,6 +517,7 @@ export default {
       this.dialogUpdateEnable = true
       this.form.type = row.release_contents[0] ? row.release_contents[0].type : 'version'
       this.form.issue_key = row.release_contents[0] ? row.release_contents[0].issue_key : ''
+      this.releaseVersion = (row.release_contents.find(c => c.release_version) || {}).release_version || ''
       this.form.selectList = row.release_contents.map(v => {
         this.$set(v, 'edit', false)
         return v

@@ -6,6 +6,10 @@
         <el-descriptions-item label="创建时间">{{ taskDetail.created_time | formatDate }}</el-descriptions-item>
         <el-descriptions-item label="计划发布时间">{{ taskDetail.plan_release_time | formatDate }}</el-descriptions-item>
         <el-descriptions-item label="创建用户">{{ taskDetail.owner }}</el-descriptions-item>
+        <el-descriptions-item
+          v-if="taskDetail && taskDetail.release_contents && taskDetail.release_contents[0] && taskDetail.release_contents[0].release_version"
+          label="发布版本"
+        >{{ taskDetail.release_contents[0].release_version }}</el-descriptions-item>
       </el-descriptions>
       <el-descriptions title="执行信息" style="font-size: large;margin-top: 1%">
         <el-descriptions-item label="执行用户">{{ releaseDetail.user }}</el-descriptions-item>

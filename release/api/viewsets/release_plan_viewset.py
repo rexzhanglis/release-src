@@ -5,7 +5,7 @@ time: 2021/9/28 16:07
 """
 from datetime import datetime
 
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.db.models import Q
 from django.forms import model_to_dict
 from rest_framework import serializers, viewsets
@@ -14,6 +14,7 @@ from rest_framework.decorators import action
 from api.models import ReleasePlan, ReleaseContent, MdlReleaseContent, ReleaseDetail
 from api.permissions.edit_permission import ReleasePlanEditPermission
 from common.pagination import CustomPagination
+from api.exception import CustomRuntimeException
 from common.utils.apiutil import ApiResponse
 from const.models import Constance
 from mdl.models import MdlServer
@@ -126,32 +127,35 @@ class ReleasePlanViewSet(viewsets.ModelViewSet):
         data = request.data
         is_auto = data.get("is_auto") if data.get("is_auto") else False
         owner = data.get("owner") if data.get("owner") else request.user  # 针对jira自动创建发布计划场景 传递owner参数
-        with transaction.atomic():
-            plan_release_time = datetime.strptime(data["plan_release_time"], '%Y-%m-%d %H:%M:%S')
-            release_plan = ReleasePlan.objects.create(name=data["name"], project=data["project"],
-                                                      plan_release_time=plan_release_time, owner=owner,
-                                                      is_auto=is_auto, category=data.get("category"))
-            for index, content in enumerate(data["selectList"], start=1):
-                obj = {
-                    "index": index,
-                    "release_plan": release_plan,
-                    "config_file": None if '无' in content["config_file"] else content["config_file"].strip()
-                }
-                # 3.1 针对mdl项目创建发布内容
-                if data["project"] == "MDL":
-                    obj["release_object"] = content["release_object"]
-                    obj["type"] = data["type"]
-                    obj["issue_key"] = data["issue_key"]
-                    if data["type"] == "version":
+        try:
+            with transaction.atomic():
+                plan_release_time = datetime.strptime(data["plan_release_time"], '%Y-%m-%d %H:%M:%S')
+                release_plan = ReleasePlan.objects.create(name=data["name"], project=data["project"],
+                                                          plan_release_time=plan_release_time, owner=owner,
+                                                          is_auto=is_auto, category=data.get("category"))
+                for index, content in enumerate(data["selectList"], start=1):
+                    obj = {
+                        "index": index,
+                        "release_plan": release_plan,
+                        "config_file": None if '无' in content["config_file"] else content["config_file"].strip()
+                    }
+                    # 3.1 针对mdl项目创建发布内容
+                    if data["project"] == "MDL":
+                        obj["release_object"] = content["release_object"]
+                        obj["type"] = data["type"]
+                        obj["issue_key"] = data["issue_key"]
+                        if data["type"] == "version":
+                            obj["release_version"] = content["release_version"]
+                            obj["executable"] = content.get("executable") or "feeder_handler"
+                        MdlReleaseContent.objects.create(**obj)
+                    # 3.2 rancher项目创建发布内容
+                    else:
+                        obj["rancher_app_version"] = content["rancher_app_version"]
+                        obj["issue_key"] = content["issue_key"]
                         obj["release_version"] = content["release_version"]
-                        obj["executable"] = content.get("executable") or "feeder_handler"
-                    MdlReleaseContent.objects.create(**obj)
-                # 3.2 rancher项目创建发布内容
-                else:
-                    obj["rancher_app_version"] = content["rancher_app_version"]
-                    obj["issue_key"] = content["issue_key"]
-                    obj["release_version"] = content["release_version"]
-                    ReleaseContent.objects.create(**obj)
+                        ReleaseContent.objects.create(**obj)
+        except IntegrityError:
+            raise CustomRuntimeException("发布计划名称已存在，请更换名称后重试")
         return ApiResponse(data="success")
 
     @action(detail=False, methods=["post"], url_path="update_release_plan")
@@ -163,38 +167,41 @@ class ReleasePlanViewSet(viewsets.ModelViewSet):
         """
         data = request.data
         is_auto = data.get("is_auto") if data.get("is_auto") else False
-        with transaction.atomic():
-            # 1. 更新发布计划
-            plan_release_time = datetime.strptime(data["plan_release_time"], '%Y-%m-%d %H:%M:%S')
-            ReleasePlan.objects.filter(id=data["id"]).update(name=data["name"], plan_release_time=plan_release_time,
-                                                             is_auto=is_auto, project=data["project"],
-                                                             category=data.get("category"))
-            # 2. 删除与发布计划相关的发布内容
-            release_plan = ReleasePlan.objects.get(id=data["id"])
-            release_plan.delete_release_contents()
-            # 3. 创建与发布计划相关的发布内容
-            for index, content in enumerate(data["selectList"], start=1):
-                obj = {
-                    "index": index,
-                    "release_plan": release_plan,
-                    "config_file": None if not content["config_file"] or '无' in content["config_file"] else content[
-                        "config_file"].strip()
-                }
-                # 3.1 针对mdl项目创建发布内容
-                if data["project"] == "MDL":
-                    obj["release_object"] = content["release_object"]
-                    obj["type"] = data["type"]
-                    obj["issue_key"] = data["issue_key"]
-                    if data["type"] == "version":
+        try:
+            with transaction.atomic():
+                # 1. 更新发布计划
+                plan_release_time = datetime.strptime(data["plan_release_time"], '%Y-%m-%d %H:%M:%S')
+                ReleasePlan.objects.filter(id=data["id"]).update(name=data["name"], plan_release_time=plan_release_time,
+                                                                 is_auto=is_auto, project=data["project"],
+                                                                 category=data.get("category"))
+                # 2. 删除与发布计划相关的发布内容
+                release_plan = ReleasePlan.objects.get(id=data["id"])
+                release_plan.delete_release_contents()
+                # 3. 创建与发布计划相关的发布内容
+                for index, content in enumerate(data["selectList"], start=1):
+                    obj = {
+                        "index": index,
+                        "release_plan": release_plan,
+                        "config_file": None if not content["config_file"] or '无' in content["config_file"] else content[
+                            "config_file"].strip()
+                    }
+                    # 3.1 针对mdl项目创建发布内容
+                    if data["project"] == "MDL":
+                        obj["release_object"] = content["release_object"]
+                        obj["type"] = data["type"]
+                        obj["issue_key"] = data["issue_key"]
+                        if data["type"] == "version":
+                            obj["release_version"] = content["release_version"]
+                            obj["executable"] = content.get("executable") or "feeder_handler"
+                        MdlReleaseContent.objects.create(**obj)
+                    # 3.2 rancher项目创建发布内容
+                    else:
+                        obj["rancher_app_version"] = content["rancher_app_version"]
+                        obj["issue_key"] = content["issue_key"]
                         obj["release_version"] = content["release_version"]
-                        obj["executable"] = content.get("executable") or "feeder_handler"
-                    MdlReleaseContent.objects.create(**obj)
-                # 3.2 rancher项目创建发布内容
-                else:
-                    obj["rancher_app_version"] = content["rancher_app_version"]
-                    obj["issue_key"] = content["issue_key"]
-                    obj["release_version"] = content["release_version"]
-                    ReleaseContent.objects.create(**obj)
+                        ReleaseContent.objects.create(**obj)
+        except IntegrityError:
+            raise CustomRuntimeException("发布计划名称已存在，请更换名称后重试")
         return ApiResponse(data="success")
 
     @action(detail=False, methods=["post"], url_path="delete_release_plan")

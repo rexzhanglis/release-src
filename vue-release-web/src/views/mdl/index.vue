@@ -396,6 +396,10 @@ export default {
           select_release_object_list.push(val)
         }
         if (this.form.type === 'version') {
+          if (!this.form.issue_key) {
+            this.$message({ message: '请先选择Jira Issue，再选择发布对象', type: 'warning', duration: 3 * 1000 })
+            return
+          }
           getMdlReleaseIssueVersion({issue_key: this.form.issue_key}).then(response => {
             select_release_object_list.forEach(item => {
               const temp = {}

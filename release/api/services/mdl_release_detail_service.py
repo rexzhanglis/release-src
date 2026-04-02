@@ -49,6 +49,8 @@ class MdlReleaseDetailService(ReleaseDetailService):
 
         UPGRADE_TIMEOUT = 600  # 每次 upgrade 最多等待 10 分钟
 
+        self.release_detail.set_status("发布中")
+
         def _run():
             connection.close()
             self._do_upgrade(modules)

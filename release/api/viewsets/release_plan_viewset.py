@@ -49,8 +49,10 @@ class ReleasePlanViewSet(viewsets.ModelViewSet):
         for field, value in filter_option_value.items():
             # 只取出值存在的查询参数过滤
             if field == 'status' and value:
-                queryset = queryset.filter(
-                    id__in=[obj.id for obj in queryset if obj.get_release_detail_status() == value])
+                if value == '未发布':
+                    queryset = queryset.filter(releasedetail__isnull=True)
+                else:
+                    queryset = queryset.filter(releasedetail__status=value)
             elif value:
                 queryset = queryset.filter(**{field: value})
         # 3. 基于前端搜索框过滤
@@ -59,19 +61,40 @@ class ReleasePlanViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(Q(name__icontains=search) | Q(owner__icontains=search))
         # 4. 分页处理
         custom_pagination = CustomPagination()
+        total_count = queryset.count()
         res_page = custom_pagination.paginate_queryset(queryset=queryset, request=request, )
-        # 5. 处理数据
+        # 5. 批量预取关联数据，避免 N+1 查询
+        plan_ids = [p.id for p in res_page]
+        # 批量查询 ReleaseDetail
+        detail_map = {}
+        for d in ReleaseDetail.objects.filter(release_plan_id__in=plan_ids):
+            detail_map[d.release_plan_id] = d
+        # 批量查询 release contents
+        if type == 'MDL':
+            contents_map = {}
+            for c in MdlReleaseContent.objects.filter(release_plan_id__in=plan_ids).values(
+                    "release_plan_id", "index", "issue_key", "release_version",
+                    "release_object", "config_file", "type", "status", "executable"):
+                contents_map.setdefault(c["release_plan_id"], []).append(c)
+        else:
+            contents_map = {}
+            for c in ReleaseContent.objects.filter(release_plan_id__in=plan_ids).values(
+                    "release_plan_id", "index", "issue_key", "release_version",
+                    "rancher_app_version", "config_file", "status"):
+                contents_map.setdefault(c["release_plan_id"], []).append(c)
+        # 6. 组装数据
         data = []
         for release_plan in res_page:
             release_plan_dict = model_to_dict(release_plan)
             release_plan_dict["created_time"] = release_plan.created_time
-            release_plan_dict["release_contents"] = release_plan.get_all_release_contents()
-            release_plan_dict["status"] = release_plan.get_release_detail_status()
-            release_plan_dict["release_time"], release_plan_dict[
-                "last_updated_time"] = release_plan.get_release_detail_release_time()
+            release_plan_dict["release_contents"] = contents_map.get(release_plan.id, [])
+            detail = detail_map.get(release_plan.id)
+            release_plan_dict["status"] = detail.status if detail else "未发布"
+            release_plan_dict["release_time"] = detail.created_time if detail else None
+            release_plan_dict["last_updated_time"] = detail.last_updated_time if detail else None
             data.append(release_plan_dict)
         res = {
-            'count': queryset.count(),
+            'count': total_count,
             'previous': custom_pagination.get_previous_link(),  # 获取上一页链接，如果没有则是None
             'next': custom_pagination.get_next_link(),  # 获取下一页链接，如果没有则是None
             'results': data,  # 当前页的序列化数据

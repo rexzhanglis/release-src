@@ -40,35 +40,37 @@
               <el-button :disabled="!isFail" type="primary" @click="failRetry()">失败重试</el-button>
             </el-col>
           </el-row>
-          <el-steps
-            v-if="this.taskDetail.project === 'MDL'"
-            :space="250"
-            align-center
-            style="margin-top: 1.5%"
-            :active="releaseDetail.active-1"
-            :process-status="processStatus"
-          >
-            <el-step
-              v-for="item in moduleList"
-              :title="item.release_object"
-              :description="item.release_version"
-              :status="item.status"
-            />
-          </el-steps>
-          <el-steps
-            v-else
-            :space="250"
-            style="margin-top: 1.5%"
-            align-center
-            :active="releaseDetail.active-1"
-            :process-status="processStatus"
-          >
-            <el-step
-              v-for="item in moduleList"
-              :title="item.release_version"
-              :status="item.status"
-            />
-          </el-steps>
+          <div class="steps-scroll-wrapper" style="margin-top: 1.5%">
+            <el-steps
+              v-if="this.taskDetail.project === 'MDL'"
+              :space="stepsSpace"
+              align-center
+              :active="releaseDetail.active-1"
+              :process-status="processStatus"
+            >
+              <el-step
+                v-for="item in moduleList"
+                :key="item.release_object"
+                :title="formatStepTitle(item.release_object)"
+                :description="item.release_version"
+                :status="item.status"
+              />
+            </el-steps>
+            <el-steps
+              v-else
+              :space="stepsSpace"
+              align-center
+              :active="releaseDetail.active-1"
+              :process-status="processStatus"
+            >
+              <el-step
+                v-for="item in moduleList"
+                :key="item.release_version"
+                :title="item.release_version"
+                :status="item.status"
+              />
+            </el-steps>
+          </div>
         </el-collapse-item>
         <el-collapse-item name="2">
           <span slot="title" class="collapse-title">日志</span>
@@ -101,7 +103,14 @@ export default {
   computed: {
     ...mapGetters([
       'name'
-    ])
+    ]),
+    stepsSpace() {
+      // 当机器数量超过5台时，使用固定宽度使其可滚动；否则自适应
+      if (this.moduleList.length > 5) {
+        return 200
+      }
+      return undefined // 自适应
+    }
   },
   data() {
     return {
@@ -142,6 +151,15 @@ export default {
   methods: {
     handle(url) {
       window.open(url, '_blank')
+    },
+    formatStepTitle(releaseObject) {
+      // release_object 格式: fqdn__ip__serviceName，提取关键信息缩短显示
+      if (!releaseObject) return ''
+      const parts = releaseObject.split('__')
+      if (parts.length === 3) {
+        return parts[2] + '\n' + parts[1]
+      }
+      return releaseObject
     },
     editVisible() {
       // 当发布成功且大于一周后 所有按钮不可见 即也不能进行回滚操作
@@ -201,9 +219,9 @@ export default {
             })
             this.moduleList = temp
             // 判断升级状态
-            if (this.releaseDetail.status === '发布中') {
+            if (this.releaseDetail.status === '发布中' || this.releaseDetail.status === '升级中') {
               this.release_button = '暂停'
-              this.isFail = false
+              this.isFail = true
               if (!this.timer) {
                 this.startTimer()
               }
@@ -372,6 +390,21 @@ export default {
 
 .my-content {
   background: #909399
+}
+
+.steps-scroll-wrapper {
+  overflow-x: auto;
+  padding-bottom: 10px;
+}
+
+.steps-scroll-wrapper >>> .el-step__title {
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-line;
+}
+
+.steps-scroll-wrapper >>> .el-step__description {
+  font-size: 11px;
 }
 
 </style>

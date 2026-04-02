@@ -161,7 +161,7 @@ class ReleaseDetail(TimestampedModel):
     )
     release_plan = models.ForeignKey(ReleasePlan, verbose_name="所属发布计划", null=False, on_delete=models.DO_NOTHING)
     user = models.CharField("执行发布用户", max_length=50, null=False)
-    status = models.CharField("任务状态", default="发布中", max_length=20, choices=STATUS_CHOICES, null=False)
+    status = models.CharField("任务状态", default="升级中", max_length=20, choices=STATUS_CHOICES, null=False)
     prompt = models.TextField(null=True, blank=True)
     log = models.TextField(null=True, blank=True)
     active = models.IntegerField("流程图当前发布的位置", default=1)

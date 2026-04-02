@@ -53,11 +53,11 @@ class ReleaseDetailService(object):
 
     def fail_skip(self):
         """
-        失败跳过 分两种情形 发布失败/发布中(卡住) 回滚失败
+        失败跳过 分两种情形 发布失败 回滚失败
         """
         self.release_detail.set_log("开始失败跳过操作", self.user)
         active_index = self.release_detail.active
-        if self.release_detail.status in ("发布失败", "发布中", "升级中"):
+        if self.release_detail.status == "发布失败":
             modules = self.release_plan.get_all_release_contents_objs()[active_index:]
             self.upgrade(modules)
         elif self.release_detail.status == "回滚失败":
@@ -67,11 +67,11 @@ class ReleaseDetailService(object):
 
     def fail_retry(self):
         """
-        失败重试 分两种情形 发布失败/发布中(卡住) 回滚失败
+        失败重试 分两种情形 发布失败 回滚失败
         """
         self.release_detail.set_log("开始失败重试操作", self.user)
         active_index = self.release_detail.active
-        if self.release_detail.status in ("发布失败", "发布中", "升级中"):
+        if self.release_detail.status == "发布失败":
             modules = self.release_plan.get_all_release_contents_objs()[active_index - 1:]
             self.upgrade(modules)
         elif self.release_detail.status == "回滚失败":

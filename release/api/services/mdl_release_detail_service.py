@@ -70,6 +70,26 @@ class MdlReleaseDetailService(ReleaseDetailService):
 
         threading.Thread(target=_watchdog, daemon=True).start()
 
+    def fail_skip(self):
+        """
+        MDL失败跳过：支持发布失败、回滚失败，以及发布中/升级中卡住的恢复
+        """
+        self.release_detail.refresh_from_db()
+        if self.release_detail.status in ("发布中", "升级中"):
+            self.release_detail.set_log("检测到发布中状态卡住，执行失败跳过", self.user)
+            self.release_detail.set_status("发布失败")
+        super().fail_skip()
+
+    def fail_retry(self):
+        """
+        MDL失败重试：支持发布失败、回滚失败，以及发布中/升级中卡住的恢复
+        """
+        self.release_detail.refresh_from_db()
+        if self.release_detail.status in ("发布中", "升级中"):
+            self.release_detail.set_log("检测到发布中状态卡住，执行失败重试", self.user)
+            self.release_detail.set_status("发布失败")
+        super().fail_retry()
+
     def _do_upgrade(self, modules):
         try:
             # 1. 发布

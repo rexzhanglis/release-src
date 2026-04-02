@@ -53,7 +53,7 @@ class ReleaseDetailViewSet(viewsets.ModelViewSet):
         发布
         """
         if ReleasePlan.objects.get(name=request.data["name"]).project == 'MDL' and ReleaseDetail.objects.filter(
-                status="发布中", release_plan__project="MDL").exists():
+                status__in=["升级中", "发布中"], release_plan__project="MDL").exists():
             raise CustomRuntimeException(msg="mdl暂时不支持多个任务同时发布，请等正在发布的任务完成后再发布")
         self._get_release_service(name=request.data["name"])(name=request.data["name"], user=request.user).start()
         return ApiResponse(data="success")

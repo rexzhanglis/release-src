@@ -98,6 +98,7 @@ class MdlReleaseDetailService(ReleaseDetailService):
     def _do_upgrade(self, modules):
         try:
             # 1. 发布
+            deploy_start = time.time()
             for module in modules:
                 # 只有当is_release = true时，才被允许发布
                 if MdlReleaseContent.objects.filter(release_plan=module.release_plan,
@@ -108,12 +109,17 @@ class MdlReleaseDetailService(ReleaseDetailService):
                     self.release_detail.set_log("{} {} 开始升级".format(module.release_object, module.release_version),
                                                 self.user)
                     module.set_status("process")
+                    module_start = time.time()
                     self._upgrade(module)
-                    self.release_detail.set_log("{} {} 升级成功".format(module.release_object, module.release_version),
-                                                self.user)
+                    module_elapsed = time.time() - module_start
+                    self.release_detail.set_log(
+                        "{} {} 升级成功，耗时 {:.1f}s".format(module.release_object, module.release_version, module_elapsed),
+                        self.user)
                     module.set_status("success")
             # 3 结束打日志
+            total_elapsed = time.time() - deploy_start
             if not MdlReleaseContent.objects.filter(release_plan=self.release_plan, is_release=False).exists():
+                self.release_detail.set_log("全部模块发布完成，总耗时 {:.1f}s".format(total_elapsed), self.user)
                 self.release_detail.set_status("发布成功")
             else:
                 # 这一步是因为mysql 存储的特性决定的
@@ -158,24 +164,46 @@ class MdlReleaseDetailService(ReleaseDetailService):
             srv = MdlServer.objects.select_related('host').get(host__fqdn=server_fqdn, service_name=service_name)
             self.release_detail.set_log("{} 部署目录：{}，将从 consul 拉取配置文件：{}".format(
                 module.release_object, srv.install_dir, srv.consul_files or 'feeder_handler.cfg'), self.user)
+            self.release_detail.set_log(
+                "{} [ansible] 开始执行 deploy_feeder.yml，version={}，executable={}".format(
+                    module.release_object, release_version, executable),
+                self.user, update_prompt=False)
+            ansible_start = time.time()
             out, err, rc = ansible_runner.run_command(executable_cmd='ansible-playbook',
                                                       cmdline_args=['ansi/mdl/deploy_feeder.yml', '-i',
                                                                     'ansi/mdl/hosts',
                                                                     '--extra-vars',
                                                                     'version={} executable={}'.format(release_version, executable)],
                                                       envvars=_env)
+            ansible_elapsed = time.time() - ansible_start
+            self.release_detail.set_log(
+                "{} [ansible] deploy_feeder.yml 执行完毕，耗时 {:.1f}s，returncode={}".format(
+                    module.release_object, ansible_elapsed, rc),
+                self.user, update_prompt=False)
         elif module.type == 'config':
             srv = MdlServer.objects.select_related('host').get(host__fqdn=server_fqdn, service_name=service_name)
             self.release_detail.set_log("{} 开始从 consul 拉取配置到 {}".format(module.release_object, srv.install_dir), self.user)
+            self.release_detail.set_log(
+                "{} [ansible] 开始执行 deploy_config.yml".format(module.release_object),
+                self.user, update_prompt=False)
+            ansible_start = time.time()
             out, err, rc = ansible_runner.run_command(executable_cmd='ansible-playbook',
                                                       cmdline_args=['ansi/mdl/deploy_config.yml', '-i',
                                                                     'ansi/mdl/hosts'],
                                                       envvars=_env)
+            ansible_elapsed = time.time() - ansible_start
+            self.release_detail.set_log(
+                "{} [ansible] deploy_config.yml 执行完毕，耗时 {:.1f}s，returncode={}".format(
+                    module.release_object, ansible_elapsed, rc),
+                self.user, update_prompt=False)
         if rc != 0:
+            self.release_detail.set_log(
+                "{} [ansible] stderr: {}".format(module.release_object, err),
+                self.user, level="error", update_prompt=False)
             raise Exception(out)
         if module.type == 'config':
             self.release_detail.set_log("{} consul 配置已拉取到目标机器 {}".format(module.release_object, srv.install_dir), self.user)
-        self.release_detail.set_log(out, self.user)
+        self.release_detail.set_log(out, self.user, update_prompt=False)
         # 日志抓取异步执行，不阻塞主发布流程，失败只记录警告
         import threading as _threading
         _threading.Thread(

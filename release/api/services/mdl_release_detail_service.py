@@ -3,10 +3,13 @@ author: zhixiong.zeng
 python version: 3
 time: 2021/10/11 13:24
 """
+import logging
 import time
 
 import yaml
 import os, django
+
+deploy_logger = logging.getLogger('deploy')
 
 try:
     import ansible_runner
@@ -108,6 +111,8 @@ class MdlReleaseDetailService(ReleaseDetailService):
                     self.deploy_config(module)
                     self.release_detail.set_log("{} {} 开始升级".format(module.release_object, module.release_version),
                                                 self.user)
+                    deploy_logger.info("[%s] plan=%s module=%s version=%s 开始升级",
+                                       self.user, self.release_plan.name, module.release_object, module.release_version)
                     module.set_status("process")
                     module_start = time.time()
                     self._upgrade(module)
@@ -115,11 +120,15 @@ class MdlReleaseDetailService(ReleaseDetailService):
                     self.release_detail.set_log(
                         "{} {} 升级成功，耗时 {:.1f}s".format(module.release_object, module.release_version, module_elapsed),
                         self.user)
+                    deploy_logger.info("[%s] plan=%s module=%s version=%s 升级成功 elapsed=%.1fs",
+                                       self.user, self.release_plan.name, module.release_object, module.release_version, module_elapsed)
                     module.set_status("success")
             # 3 结束打日志
             total_elapsed = time.time() - deploy_start
             if not MdlReleaseContent.objects.filter(release_plan=self.release_plan, is_release=False).exists():
                 self.release_detail.set_log("全部模块发布完成，总耗时 {:.1f}s".format(total_elapsed), self.user)
+                deploy_logger.info("[%s] plan=%s 全部模块发布完成 total_elapsed=%.1fs",
+                                   self.user, self.release_plan.name, total_elapsed)
                 self.release_detail.set_status("发布成功")
             else:
                 # 这一步是因为mysql 存储的特性决定的
@@ -129,6 +138,8 @@ class MdlReleaseDetailService(ReleaseDetailService):
             self.release_detail.set_log("{} {} 升级失败，错误：{}".format(module.release_object, module.release_version, ex),
                                         user=self.user,
                                         level="error")
+            deploy_logger.error("[%s] plan=%s module=%s version=%s 升级失败 error=%s",
+                                self.user, self.release_plan.name, module.release_object, module.release_version, ex)
             self.release_detail.set_status("发布失败")
             module.set_status("error")
             raise ex
@@ -168,6 +179,8 @@ class MdlReleaseDetailService(ReleaseDetailService):
                 "{} [ansible] 开始执行 deploy_feeder.yml，version={}，executable={}".format(
                     module.release_object, release_version, executable),
                 self.user, update_prompt=False)
+            deploy_logger.info("[%s] plan=%s module=%s ansible=deploy_feeder.yml version=%s executable=%s START",
+                               self.user, self.release_plan.name, module.release_object, release_version, executable)
             ansible_start = time.time()
             out, err, rc = ansible_runner.run_command(executable_cmd='ansible-playbook',
                                                       cmdline_args=['ansi/mdl/deploy_feeder.yml', '-i',
@@ -180,12 +193,16 @@ class MdlReleaseDetailService(ReleaseDetailService):
                 "{} [ansible] deploy_feeder.yml 执行完毕，耗时 {:.1f}s，returncode={}".format(
                     module.release_object, ansible_elapsed, rc),
                 self.user, update_prompt=False)
+            deploy_logger.info("[%s] plan=%s module=%s ansible=deploy_feeder.yml DONE elapsed=%.1fs rc=%s",
+                               self.user, self.release_plan.name, module.release_object, ansible_elapsed, rc)
         elif module.type == 'config':
             srv = MdlServer.objects.select_related('host').get(host__fqdn=server_fqdn, service_name=service_name)
             self.release_detail.set_log("{} 开始从 consul 拉取配置到 {}".format(module.release_object, srv.install_dir), self.user)
             self.release_detail.set_log(
                 "{} [ansible] 开始执行 deploy_config.yml".format(module.release_object),
                 self.user, update_prompt=False)
+            deploy_logger.info("[%s] plan=%s module=%s ansible=deploy_config.yml START",
+                               self.user, self.release_plan.name, module.release_object)
             ansible_start = time.time()
             out, err, rc = ansible_runner.run_command(executable_cmd='ansible-playbook',
                                                       cmdline_args=['ansi/mdl/deploy_config.yml', '-i',
@@ -196,10 +213,14 @@ class MdlReleaseDetailService(ReleaseDetailService):
                 "{} [ansible] deploy_config.yml 执行完毕，耗时 {:.1f}s，returncode={}".format(
                     module.release_object, ansible_elapsed, rc),
                 self.user, update_prompt=False)
+            deploy_logger.info("[%s] plan=%s module=%s ansible=deploy_config.yml DONE elapsed=%.1fs rc=%s",
+                               self.user, self.release_plan.name, module.release_object, ansible_elapsed, rc)
         if rc != 0:
             self.release_detail.set_log(
                 "{} [ansible] stderr: {}".format(module.release_object, err),
                 self.user, level="error", update_prompt=False)
+            deploy_logger.error("[%s] plan=%s module=%s ansible FAILED rc=%s\nstdout=%s\nstderr=%s",
+                                self.user, self.release_plan.name, module.release_object, rc, out, err)
             raise Exception(out)
         if module.type == 'config':
             self.release_detail.set_log("{} consul 配置已拉取到目标机器 {}".format(module.release_object, srv.install_dir), self.user)

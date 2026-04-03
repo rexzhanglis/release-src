@@ -50,6 +50,14 @@ LOGGING = {
             'backupCount': 5,
             'formatter': 'verbose'
         },
+        'deploy': {
+            'level': 'DEBUG',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': os.path.join(LOG_ROOT, 'deploy.log'),
+            'maxBytes': 1024 * 1024 * 100,
+            'backupCount': 10,
+            'formatter': 'verbose'
+        },
 
     },
     'loggers': {
@@ -72,6 +80,11 @@ LOGGING = {
             'handlers': ['cron'],
             'level': 'DEBUG',
             'propagate': True,
+        },
+        'deploy': {
+            'handlers': ['deploy'],
+            'level': 'DEBUG',
+            'propagate': False,
         },
     }
 }

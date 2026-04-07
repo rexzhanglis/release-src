@@ -2,10 +2,6 @@
   file: path={{ install_dir }} state=directory owner={{ user }} group={{ user }}
   become: true
 
-- name: clean old binaries from install_dir
-  shell: find {{ install_dir }} -maxdepth 1 -type f ! -name "*.cfg" -delete
-  become: true
-
 - name: unarchive package
   unarchive:
     src: "/datayes/mdl/packages/{{ package_name }}"
@@ -30,4 +26,14 @@
 - name: put files
   copy: src=files/{{ item }} dest={{ install_dir }} owner={{ user }} group={{ user }} mode=0644
   with_items: "{{ put_files }}"
+  become: true
+
+- name: 重新上传出口机器配置文件（保持与 init 一致）
+  when: is_egress | default(false) | bool and egress_files_dir | default('') != ''
+  copy:
+    src: "{{ egress_files_dir }}/"
+    dest: "{{ install_dir }}/"
+    owner: "{{ user }}"
+    group: "{{ user }}"
+    mode: '0644'
   become: true

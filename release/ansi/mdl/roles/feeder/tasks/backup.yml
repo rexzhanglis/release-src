@@ -9,14 +9,7 @@
     group: "{{ user }}"
   become: true
 
-- name: backup files from backup_items
-  shell: cp {{ install_dir }}/{{ item }} {{ backup_dir }}/
-  with_items: "{{ backup_items }}"
+- name: backup all files in install_dir
+  shell: cp -r {{ install_dir }}/. {{ backup_dir }}/
   become: true
-  failed_when: false
-
-- name: backup consul config file
-  shell: cp {{ install_dir }}/{{ consul_files.split(',')[0] | trim }} {{ backup_dir }}/
-  become: true
-  when: consul_files is defined and consul_files | trim != ''
   failed_when: false

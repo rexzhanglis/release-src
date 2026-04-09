@@ -406,6 +406,8 @@ class MdlReleaseDetailService(ReleaseDetailService):
         gitlab_client = GitlabClient()
         filenames = gitlab_client.list_directory_files(git_dir)
         if not filenames:
+            if module.type == 'config':
+                raise Exception("{} Git目录 '{}' 无文件，请确认配置文件已提交到 GitLab".format(module.release_object, git_dir))
             self.release_detail.set_log("{} Git目录无文件，跳过配置发布".format(module.release_object), self.user)
             return
 

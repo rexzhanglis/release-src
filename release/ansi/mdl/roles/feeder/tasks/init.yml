@@ -144,7 +144,7 @@
 - name: 添加 cron 任务（每 10 分钟拉取云配置）
   when: is_egress | default(false) | bool
   cron:
-    name: "get_cloud_conf"
+    name: "get_cloud_conf_{{ service_name }}"
     job: "cd {{ install_dir }} && {{ remote_python | default('/usr/bin/python3') }} get_cloud_conf.py -d 1"
     minute: "*/10"
     state: present

@@ -675,6 +675,7 @@ def rebuild_chain_index(msg_key, config_map=None):
 
     for attempt in range(3):
         try:
+            close_old_connections()
             MsgChainIndex.objects.update_or_create(
                 msg_key=msg_key,
                 defaults={
@@ -684,7 +685,16 @@ def rebuild_chain_index(msg_key, config_map=None):
             )
             break
         except Exception as e:
-            if attempt < 2 and 'lock' in str(e).lower():
+            err_str = str(e).lower()
+            # 重试：lock 等待、MySQL 连接丢失（2006/2013）均可恢复
+            retriable = (
+                'lock' in err_str
+                or '2006' in err_str  # MySQL server has gone away
+                or '2013' in err_str  # Lost connection to MySQL server during query
+                or 'lost connection' in err_str
+                or 'gone away' in err_str
+            )
+            if attempt < 2 and retriable:
                 time.sleep(1 + attempt)
                 close_old_connections()
             else:

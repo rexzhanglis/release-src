@@ -147,10 +147,12 @@ class MdlReleaseDetailService(ReleaseDetailService):
 
     def _run_ansible(self, cmdline_args, env):
         """
-        执行 ansible-playbook，带超时控制。
-        超时后强制 kill 进程，避免卡住导致 retry 时双进程并发操作同一台机器。
-        返回 (out, err, rc)，超时则抛异常。
+        执行 ansible-playbook，带超时控制 + 实时日志输出。
+        stdout/stderr 实时流式读取并写入发布日志，超时后强制 kill 进程。
+        返回 (out, err, rc)，超时则抛异常（异常信息包含最后几行输出，方便排查卡在哪步）。
         """
+        import threading as _threading
+
         try:
             timeout_per_machine = int(Constance.get_value("mdl_deploy_timeout_per_machine"))
         except Exception:
@@ -163,14 +165,36 @@ class MdlReleaseDetailService(ReleaseDetailService):
             text=True,
             env=env,
         )
+
+        stdout_lines = []
+        stderr_lines = []
+
+        def _read(pipe, buf):
+            for line in pipe:
+                line = line.rstrip('\n')
+                buf.append(line)
+                # 实时写入发布日志，方便用户看到当前卡在哪个 task
+                self.release_detail.set_log(line, self.user, update_prompt=False)
+
+        t_out = _threading.Thread(target=_read, args=(proc.stdout, stdout_lines), daemon=True)
+        t_err = _threading.Thread(target=_read, args=(proc.stderr, stderr_lines), daemon=True)
+        t_out.start()
+        t_err.start()
+
         try:
-            out, err = proc.communicate(timeout=timeout_per_machine)
-            return out, err, proc.returncode
+            proc.wait(timeout=timeout_per_machine)
+            t_out.join(timeout=5)
+            t_err.join(timeout=5)
+            return '\n'.join(stdout_lines), '\n'.join(stderr_lines), proc.returncode
         except subprocess.TimeoutExpired:
             proc.kill()
-            out, err = proc.communicate()
+            t_out.join(timeout=5)
+            t_err.join(timeout=5)
+            last_lines = stdout_lines[-10:] or stderr_lines[-10:]
             raise Exception(
-                "ansible-playbook 执行超时（超过 {}s），进程已终止，请确认目标机器状态后再重试".format(timeout_per_machine)
+                "ansible-playbook 执行超时（超过 {}s），进程已终止。最后输出：\n{}".format(
+                    timeout_per_machine, '\n'.join(last_lines)
+                )
             )
 
     def _upgrade(self, module, is_rollback=False):

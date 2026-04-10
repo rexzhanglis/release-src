@@ -181,7 +181,12 @@ EMAIL_HOST_USER = 'svc-devops@datayes.com'
 EMAIL_HOST_PASSWORD = 'EWArl8YtAx13'
 EMAIL_SUFFIX = '@datayes.com'
 
-DJANGO_EASY_AUDIT_UNREGISTERED_CLASSES_EXTRA = ["account.user", "app.RancherProject", "app.RancherApp"]
+DJANGO_EASY_AUDIT_UNREGISTERED_CLASSES_EXTRA = [
+    "account.user",
+    "app.RancherProject",
+    "app.RancherApp",
+    "mdl.MsgChainIndex",       # 索引缓存表，高频写入，无需审计
+]
 
 # wechat
 ENTERPRISE_WECHAT_URL = "http://message.wmcloud.com/messages/wecom"

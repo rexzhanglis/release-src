@@ -7,7 +7,11 @@
 
 - name: donwload package
   when: not package_stat.stat.exists
-  local_action: get_url url={{ package_url }} dest=/datayes/mdl/packages/{{ package_name }}
+  local_action:
+    module: get_url
+    url: "{{ package_url }}"
+    dest: "/datayes/mdl/packages/{{ package_name }}"
+    timeout: 120
 
 # - name: package stat
 #   stat: path=/tmp/{{ package_name }}

@@ -293,8 +293,10 @@ class MdlReleaseDetailService(ReleaseDetailService):
         ip = MdlServer.objects.select_related('host').get(host__fqdn=server, service_name=service_name).host.ip
         ansible_ssh_user = Constance.get_value("ansible_ssh_user")
         ansible_ssh_pass = Constance.get_value("ansible_ssh_pass")
-        host_info = "release ansible_ssh_host={} ansible_ssh_user={} ansible_ssh_pass={}".format(ip, ansible_ssh_user,
-                                                                                                 ansible_ssh_pass)
+        host_info = (
+            "release ansible_ssh_host={} ansible_ssh_user={} ansible_ssh_pass={}"
+            " ansible_ssh_common_args='-o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=3'"
+        ).format(ip, ansible_ssh_user, ansible_ssh_pass)
         # 2. 生成对应的文件
         with open(ansible_hosts_path, "w") as f:
             f.write(host_info)

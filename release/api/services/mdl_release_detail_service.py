@@ -169,15 +169,21 @@ class MdlReleaseDetailService(ReleaseDetailService):
         stdout_lines = []
         stderr_lines = []
 
-        def _read(pipe, buf):
+        def _read_stdout(pipe):
             for line in pipe:
                 line = line.rstrip('\n')
-                buf.append(line)
+                stdout_lines.append(line)
                 # 实时写入发布日志，方便用户看到当前卡在哪个 task
                 self.release_detail.set_log(line, self.user, update_prompt=False)
 
-        t_out = _threading.Thread(target=_read, args=(proc.stdout, stdout_lines), daemon=True)
-        t_err = _threading.Thread(target=_read, args=(proc.stderr, stderr_lines), daemon=True)
+        def _read_stderr(pipe):
+            for line in pipe:
+                stderr_lines.append(line.rstrip('\n'))
+            # stderr 不实时写日志，避免与 stdout 并发写 DB 冲突
+            # 失败时统一在 _upgrade 里通过 err 输出
+
+        t_out = _threading.Thread(target=_read_stdout, args=(proc.stdout,), daemon=True)
+        t_err = _threading.Thread(target=_read_stderr, args=(proc.stderr,), daemon=True)
         t_out.start()
         t_err.start()
 
@@ -276,7 +282,6 @@ class MdlReleaseDetailService(ReleaseDetailService):
             raise Exception(out)
         if module.type == 'config':
             self.release_detail.set_log("{} consul 配置已拉取到目标机器 {}".format(module.release_object, srv.install_dir), self.user)
-        self.release_detail.set_log(out, self.user, update_prompt=False)
         # 日志抓取异步执行，不阻塞主发布流程，失败只记录警告
         import threading as _threading
         _threading.Thread(

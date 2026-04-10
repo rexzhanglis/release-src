@@ -11,7 +11,7 @@
     module: get_url
     url: "{{ package_url }}"
     dest: "/datayes/mdl/packages/{{ package_name }}"
-    timeout: 120
+    timeout: 120   # 连接超时（秒），不限制下载总时长，大包仍可能耗时较长
 
 # - name: package stat
 #   stat: path=/tmp/{{ package_name }}

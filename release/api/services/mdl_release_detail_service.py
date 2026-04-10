@@ -150,13 +150,20 @@ class MdlReleaseDetailService(ReleaseDetailService):
         执行 ansible-playbook，带超时控制 + 实时日志输出。
         stdout/stderr 实时流式读取并写入发布日志，超时后强制 kill 进程。
         返回 (out, err, rc)，超时则抛异常（异常信息包含最后几行输出，方便排查卡在哪步）。
+
+        注意：长时间部署（多台机器）会导致 MySQL 连接空闲超时（error 2006 gone away），
+        在关键节点调用 close_old_connections() 让 Django 自动重建连接。
         """
         import threading as _threading
+        from django.db import close_old_connections
 
         try:
             timeout_per_machine = int(Constance.get_value("mdl_deploy_timeout_per_machine"))
         except Exception:
             timeout_per_machine = 300
+
+        # 启动前先清理可能已失效的连接
+        close_old_connections()
 
         proc = subprocess.Popen(
             ['ansible-playbook'] + cmdline_args,
@@ -170,9 +177,12 @@ class MdlReleaseDetailService(ReleaseDetailService):
         stderr_lines = []
 
         def _read_stdout(pipe):
-            for line in pipe:
+            for i, line in enumerate(pipe):
                 line = line.rstrip('\n')
                 stdout_lines.append(line)
+                # 每 30 行检查一次连接，防止长时间无输出后连接失效
+                if i % 30 == 0:
+                    close_old_connections()
                 # 实时写入发布日志，方便用户看到当前卡在哪个 task
                 self.release_detail.set_log(line, self.user, update_prompt=False)
 
@@ -191,11 +201,14 @@ class MdlReleaseDetailService(ReleaseDetailService):
             proc.wait(timeout=timeout_per_machine)
             t_out.join(timeout=5)
             t_err.join(timeout=5)
+            # ansible 执行完后连接可能已失效，重建后再做后续 DB 操作
+            close_old_connections()
             return '\n'.join(stdout_lines), '\n'.join(stderr_lines), proc.returncode
         except subprocess.TimeoutExpired:
             proc.kill()
             t_out.join(timeout=5)
             t_err.join(timeout=5)
+            close_old_connections()
             last_lines = stdout_lines[-10:] or stderr_lines[-10:]
             raise Exception(
                 "ansible-playbook 执行超时（超过 {}s），进程已终止。最后输出：\n{}".format(

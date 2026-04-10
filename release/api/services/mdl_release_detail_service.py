@@ -4,6 +4,7 @@ python version: 3
 time: 2021/10/11 13:24
 """
 import logging
+import subprocess
 import time
 
 import yaml
@@ -144,6 +145,34 @@ class MdlReleaseDetailService(ReleaseDetailService):
             module.set_status("error")
             raise ex
 
+    def _run_ansible(self, cmdline_args, env):
+        """
+        执行 ansible-playbook，带超时控制。
+        超时后强制 kill 进程，避免卡住导致 retry 时双进程并发操作同一台机器。
+        返回 (out, err, rc)，超时则抛异常。
+        """
+        try:
+            timeout_per_machine = int(Constance.get_value("mdl_deploy_timeout_per_machine"))
+        except Exception:
+            timeout_per_machine = 300
+
+        proc = subprocess.Popen(
+            ['ansible-playbook'] + cmdline_args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+        try:
+            out, err = proc.communicate(timeout=timeout_per_machine)
+            return out, err, proc.returncode
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            out, err = proc.communicate()
+            raise Exception(
+                "ansible-playbook 执行超时（超过 {}s），进程已终止，请确认目标机器状态后再重试".format(timeout_per_machine)
+            )
+
     def _upgrade(self, module, is_rollback=False):
         """
         1. 获取当前版本信息
@@ -182,12 +211,11 @@ class MdlReleaseDetailService(ReleaseDetailService):
             deploy_logger.info("[%s] plan=%s module=%s ansible=deploy_feeder.yml version=%s executable=%s START",
                                self.user, self.release_plan.name, module.release_object, release_version, executable)
             ansible_start = time.time()
-            out, err, rc = ansible_runner.run_command(executable_cmd='ansible-playbook',
-                                                      cmdline_args=['ansi/mdl/deploy_feeder.yml', '-i',
-                                                                    'ansi/mdl/hosts',
-                                                                    '--extra-vars',
-                                                                    'version={} executable={}'.format(release_version, executable)],
-                                                      envvars=_env)
+            out, err, rc = self._run_ansible(
+                ['ansi/mdl/deploy_feeder.yml', '-i', 'ansi/mdl/hosts',
+                 '--extra-vars', 'version={} executable={}'.format(release_version, executable)],
+                env=_env,
+            )
             ansible_elapsed = time.time() - ansible_start
             self.release_detail.set_log(
                 "{} [ansible] deploy_feeder.yml 执行完毕，耗时 {:.1f}s，returncode={}".format(
@@ -204,10 +232,10 @@ class MdlReleaseDetailService(ReleaseDetailService):
             deploy_logger.info("[%s] plan=%s module=%s ansible=deploy_config.yml START",
                                self.user, self.release_plan.name, module.release_object)
             ansible_start = time.time()
-            out, err, rc = ansible_runner.run_command(executable_cmd='ansible-playbook',
-                                                      cmdline_args=['ansi/mdl/deploy_config.yml', '-i',
-                                                                    'ansi/mdl/hosts'],
-                                                      envvars=_env)
+            out, err, rc = self._run_ansible(
+                ['ansi/mdl/deploy_config.yml', '-i', 'ansi/mdl/hosts'],
+                env=_env,
+            )
             ansible_elapsed = time.time() - ansible_start
             self.release_detail.set_log(
                 "{} [ansible] deploy_config.yml 执行完毕，耗时 {:.1f}s，returncode={}".format(

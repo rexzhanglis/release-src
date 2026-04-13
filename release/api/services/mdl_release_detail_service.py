@@ -53,7 +53,7 @@ class MdlReleaseDetailService(ReleaseDetailService):
 
         # 动态超时：每台机器预留 5 分钟（可在 Constance 中配置 mdl_deploy_timeout_per_machine），至少 10 分钟
         try:
-            timeout_per_machine = int(Constance.get_value("mdl_deploy_timeout_per_machine"))
+            timeout_per_machine = max(60, int(Constance.get_value("mdl_deploy_timeout_per_machine")))
         except Exception:
             timeout_per_machine = 300
         UPGRADE_TIMEOUT = max(600, len(list(modules)) * timeout_per_machine)
@@ -158,7 +158,7 @@ class MdlReleaseDetailService(ReleaseDetailService):
         from django.db import close_old_connections
 
         try:
-            timeout_per_machine = int(Constance.get_value("mdl_deploy_timeout_per_machine"))
+            timeout_per_machine = max(60, int(Constance.get_value("mdl_deploy_timeout_per_machine")))
         except Exception:
             timeout_per_machine = 300
 

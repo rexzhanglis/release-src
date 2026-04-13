@@ -457,22 +457,50 @@ class MdlReleaseDetailService(ReleaseDetailService):
         install_dir = srv.install_dir
         cmd = 'cat {}/version'.format(install_dir)
 
+        deploy_logger.debug(
+            "[%s] _get_current_version: start  server=%s service=%s ip=%s cmd=%s release_detail=%s",
+            self.user, server, service_name, ip, cmd, self.release_detail.id,
+        )
+
         def _ssh_get():
-            return SshClient(ip=ip, username=username, password=password).send_cmd(cmd)
+            t0 = time.time()
+            deploy_logger.debug(
+                "[%s] _get_current_version: connecting  ip=%s release_detail=%s",
+                self.user, ip, self.release_detail.id,
+            )
+            client = SshClient(ip=ip, username=username, password=password)
+            deploy_logger.debug(
+                "[%s] _get_current_version: connected (%.1fs)  ip=%s release_detail=%s — executing cmd",
+                self.user, time.time() - t0, ip, self.release_detail.id,
+            )
+            result = client.send_cmd(cmd)
+            deploy_logger.debug(
+                "[%s] _get_current_version: done (%.1fs)  ip=%s result=%r release_detail=%s",
+                self.user, time.time() - t0, ip, result, self.release_detail.id,
+            )
+            return result
 
         # SshClient.connect(timeout=5) 只覆盖 TCP 握手，SSH 认证阶段可能无限挂住。
         # 用线程池套硬超时，超时后返回空串（等同于首次部署，不影响主流程）。
+        t_start = time.time()
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                 future = ex.submit(_ssh_get)
                 res = future.result(timeout=30)
         except concurrent.futures.TimeoutError:
-            deploy_logger.warning("[%s] _get_current_version SSH timeout (30s) for %s %s, treating as first deploy",
-                                  self.user, server, service_name)
+            deploy_logger.warning(
+                "[%s] _get_current_version: SSH timeout after %.1fs  server=%s service=%s ip=%s cmd=%s "
+                "release_detail=%s — treating as first deploy",
+                self.user, time.time() - t_start, server, service_name, ip, cmd, self.release_detail.id,
+            )
             return ''
         except Exception as e:
-            deploy_logger.warning("[%s] _get_current_version SSH error for %s %s: %s",
-                                  self.user, server, service_name, e)
+            deploy_logger.warning(
+                "[%s] _get_current_version: SSH error after %.1fs  server=%s service=%s ip=%s "
+                "error=%s(%s) release_detail=%s — treating as first deploy",
+                self.user, time.time() - t_start, server, service_name, ip,
+                type(e).__name__, e, self.release_detail.id,
+            )
             return ''
         return res[0].strip() if res else ''
 

@@ -12,7 +12,7 @@
 
 - name: copy install_items from extracted archive to install_dir
   shell: >
-    cp {{ install_dir }}/mdl_release/ubuntu-14.04-gcc-4.8/{{ item }}
+    cp --remove-destination {{ install_dir }}/mdl_release/ubuntu-14.04-gcc-4.8/{{ item }}
     {{ install_dir }}/
   with_items: "{{ install_items }}"
   become: true

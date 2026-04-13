@@ -12,6 +12,13 @@ import os, django
 
 deploy_logger = logging.getLogger('deploy')
 
+# 模块级注册表：追踪每个 release_detail 正在运行的 ansible-playbook 子进程
+# key: release_detail.id  value: subprocess.Popen
+# 用于在 fail_retry / fail_skip 时强制终止旧进程，防止并发部署互相干扰
+import threading as _reg_lock_mod
+_ansible_proc_registry: dict = {}
+_ansible_proc_lock = _reg_lock_mod.Lock()
+
 try:
     import ansible_runner
 except Exception:
@@ -80,10 +87,22 @@ class MdlReleaseDetailService(ReleaseDetailService):
 
         threading.Thread(target=_watchdog, daemon=True).start()
 
+    def _kill_stale_ansible(self, action: str):
+        """终止当前 release_detail 上一次遗留的 ansible-playbook 子进程"""
+        with _ansible_proc_lock:
+            old_proc = _ansible_proc_registry.pop(self.release_detail.id, None)
+        if old_proc and old_proc.poll() is None:
+            old_proc.kill()
+            deploy_logger.warning(
+                "[%s] %s: 强制终止旧 ansible-playbook 进程 pid=%s release_detail=%s",
+                self.user, action, old_proc.pid, self.release_detail.id,
+            )
+
     def fail_skip(self):
         """
         MDL失败跳过：支持发布失败、回滚失败，以及发布中/升级中卡住的恢复
         """
+        self._kill_stale_ansible("fail_skip")
         self.release_detail.refresh_from_db()
         if self.release_detail.status in ("发布中", "升级中"):
             self.release_detail.set_log("检测到发布中状态卡住，执行失败跳过", self.user)
@@ -94,6 +113,7 @@ class MdlReleaseDetailService(ReleaseDetailService):
         """
         MDL失败重试：支持发布失败、回滚失败，以及发布中/升级中卡住的恢复
         """
+        self._kill_stale_ansible("fail_retry")
         self.release_detail.refresh_from_db()
         if self.release_detail.status in ("发布中", "升级中"):
             self.release_detail.set_log("检测到发布中状态卡住，执行失败重试", self.user)
@@ -101,6 +121,8 @@ class MdlReleaseDetailService(ReleaseDetailService):
         super().fail_retry()
 
     def _do_upgrade(self, modules):
+        # 每次部署用独立的临时 hosts/host_vars 文件，避免并发部署互相覆盖
+        self._temp_ansible_files: list = []
         try:
             # 1. 发布
             deploy_start = time.time()
@@ -145,6 +167,13 @@ class MdlReleaseDetailService(ReleaseDetailService):
             self.release_detail.set_status("发布失败")
             module.set_status("error")
             raise ex
+        finally:
+            # 清理本次部署产生的临时 hosts/host_vars 文件
+            for _f in getattr(self, '_temp_ansible_files', []):
+                try:
+                    os.remove(_f)
+                except Exception:
+                    pass
 
     def _run_ansible(self, cmdline_args, env):
         """
@@ -174,6 +203,10 @@ class MdlReleaseDetailService(ReleaseDetailService):
             env=env,
         )
 
+        # 注册子进程，供 fail_retry / fail_skip 在超时前强制终止
+        with _ansible_proc_lock:
+            _ansible_proc_registry[self.release_detail.id] = proc
+
         stdout_lines = []
         stderr_lines = []
 
@@ -185,7 +218,12 @@ class MdlReleaseDetailService(ReleaseDetailService):
                 if i % 30 == 0:
                     close_old_connections()
                 # 实时写入发布日志，方便用户看到当前卡在哪个 task
-                self.release_detail.set_log(line, self.user, update_prompt=False)
+                # 必须捕获异常：set_log 失败若不处理会导致线程崩溃，
+                # stdout pipe 无人消费，ansible 写满缓冲区后卡死整个部署
+                try:
+                    self.release_detail.set_log(line, self.user, update_prompt=False)
+                except Exception as _e:
+                    deploy_logger.warning("set_log failed (stdout line %d): %s", i, _e)
 
         def _read_stderr(pipe):
             for line in pipe:
@@ -216,6 +254,11 @@ class MdlReleaseDetailService(ReleaseDetailService):
                     timeout_per_machine, '\n'.join(last_lines)
                 )
             )
+        finally:
+            with _ansible_proc_lock:
+                # 仅当注册的还是本次进程时才移除（避免 fail_retry 已 pop 后再次删除）
+                if _ansible_proc_registry.get(self.release_detail.id) is proc:
+                    _ansible_proc_registry.pop(self.release_detail.id, None)
 
     def _upgrade(self, module, is_rollback=False):
         """
@@ -256,7 +299,7 @@ class MdlReleaseDetailService(ReleaseDetailService):
                                self.user, self.release_plan.name, module.release_object, release_version, executable)
             ansible_start = time.time()
             out, err, rc = self._run_ansible(
-                ['ansi/mdl/deploy_feeder.yml', '-i', 'ansi/mdl/hosts',
+                ['ansi/mdl/deploy_feeder.yml', '-i', getattr(self, '_ansible_inventory_path', 'ansi/mdl/hosts'),
                  '--extra-vars', 'version={} executable={}'.format(release_version, executable)],
                 env=_env,
             )
@@ -277,7 +320,7 @@ class MdlReleaseDetailService(ReleaseDetailService):
                                self.user, self.release_plan.name, module.release_object)
             ansible_start = time.time()
             out, err, rc = self._run_ansible(
-                ['ansi/mdl/deploy_config.yml', '-i', 'ansi/mdl/hosts'],
+                ['ansi/mdl/deploy_config.yml', '-i', getattr(self, '_ansible_inventory_path', 'ansi/mdl/hosts')],
                 env=_env,
             )
             ansible_elapsed = time.time() - ansible_start
@@ -328,18 +371,28 @@ class MdlReleaseDetailService(ReleaseDetailService):
         """
         创建ansible 主机文件
         1. 生成获取主机信息
-        2. 生成对应的文件
+        2. 生成对应的文件（路径含 release_detail.id，避免并发部署互相覆盖）
         3. 验证文件
         """
-        # 1. 生成获取主机信息 "D:\\dev\\python\\release\\ansi\\mdl\\host"
-        ansible_hosts_path = Constance.get_value("ansible_hosts_path")
+        # 1. 生成获取主机信息
+        base_hosts_path = Constance.get_value("ansible_hosts_path")
+        # 唯一化文件路径，防止多个并发部署共用同一文件
+        ansible_hosts_path = "{}_{}".format(base_hosts_path, self.release_detail.id)
+        self._ansible_inventory_path = ansible_hosts_path
+        if not hasattr(self, '_temp_ansible_files'):
+            self._temp_ansible_files = []
+        if ansible_hosts_path not in self._temp_ansible_files:
+            self._temp_ansible_files.append(ansible_hosts_path)
+
         ip = MdlServer.objects.select_related('host').get(host__fqdn=server, service_name=service_name).host.ip
         ansible_ssh_user = Constance.get_value("ansible_ssh_user")
         ansible_ssh_pass = Constance.get_value("ansible_ssh_pass")
+        # host 别名也含 id，确保 ansible 读取匹配的 host_vars 文件
+        self._ansible_host_alias = "release_{}".format(self.release_detail.id)
         host_info = (
-            "release ansible_ssh_host={} ansible_ssh_user={} ansible_ssh_pass={}"
+            "{} ansible_ssh_host={} ansible_ssh_user={} ansible_ssh_pass={}"
             " ansible_ssh_common_args='-o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=3'"
-        ).format(ip, ansible_ssh_user, ansible_ssh_pass)
+        ).format(self._ansible_host_alias, ip, ansible_ssh_user, ansible_ssh_pass)
         # 2. 生成对应的文件
         with open(ansible_hosts_path, "w") as f:
             f.write(host_info)
@@ -354,15 +407,26 @@ class MdlReleaseDetailService(ReleaseDetailService):
         """
         创建ansible 主机文件
         1. 生成获取主机信息
-        2. 生成对应的文件
+        2. 生成对应的文件（文件名与 host 别名匹配，含 release_detail.id）
         3. 验证文件
         """
-        # 1. 生成主机部署信息"D:\\dev\\python\\release\\ansi\\mdl\\host_vars\\release1.yml"
-        ansible_host_vars_path = Constance.get_value("ansible_host_vars_path")
+        # 1. 生成主机部署信息
+        base_host_vars_path = Constance.get_value("ansible_host_vars_path")
+        # host_vars 文件名必须与 inventory 中的 host 别名一致
+        # base 形如 /path/to/host_vars/release.yml → /path/to/host_vars/release_<id>.yml
+        import os as _os
+        vars_dir = _os.path.dirname(base_host_vars_path)
+        ansible_host_vars_path = _os.path.join(vars_dir, "{}.yml".format(
+            getattr(self, '_ansible_host_alias', 'release_{}'.format(self.release_detail.id))
+        ))
+        if not hasattr(self, '_temp_ansible_files'):
+            self._temp_ansible_files = []
+        if ansible_host_vars_path not in self._temp_ansible_files:
+            self._temp_ansible_files.append(ansible_host_vars_path)
+
         srv = MdlServer.objects.select_related('host').get(host__fqdn=server, service_name=service_name)
         #  2. 生成对应的文件
-        import os as _os
-        _os.makedirs(_os.path.dirname(ansible_host_vars_path), exist_ok=True)
+        _os.makedirs(vars_dir, exist_ok=True)
         host_vars = {
             'user': srv.host.user,
             'remote_python': srv.host.remote_python,
@@ -385,13 +449,31 @@ class MdlReleaseDetailService(ReleaseDetailService):
             raise Exception("ansible host_vars文件生成异常")
 
     def _get_current_version(self, server, service_name):
+        import concurrent.futures
         srv = MdlServer.objects.select_related('host').get(host__fqdn=server, service_name=service_name)
         ip = srv.host.ip
         username = Constance.get_value("ansible_ssh_user")
         password = Constance.get_value("ansible_ssh_pass")
         install_dir = srv.install_dir
         cmd = 'cat {}/version'.format(install_dir)
-        res = SshClient(ip=ip, username=username, password=password).send_cmd(cmd)
+
+        def _ssh_get():
+            return SshClient(ip=ip, username=username, password=password).send_cmd(cmd)
+
+        # SshClient.connect(timeout=5) 只覆盖 TCP 握手，SSH 认证阶段可能无限挂住。
+        # 用线程池套硬超时，超时后返回空串（等同于首次部署，不影响主流程）。
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(_ssh_get)
+                res = future.result(timeout=30)
+        except concurrent.futures.TimeoutError:
+            deploy_logger.warning("[%s] _get_current_version SSH timeout (30s) for %s %s, treating as first deploy",
+                                  self.user, server, service_name)
+            return ''
+        except Exception as e:
+            deploy_logger.warning("[%s] _get_current_version SSH error for %s %s: %s",
+                                  self.user, server, service_name, e)
+            return ''
         return res[0].strip() if res else ''
 
     def _resolve_log_file(self, install_dir, consul_files, ssh_client):
@@ -456,8 +538,12 @@ class MdlReleaseDetailService(ReleaseDetailService):
             log_file)
         res = ssh.send_cmd(cmd)
         ssh.close()
-        self.release_detail.log = self.release_detail.log + "{}信息如下：\n".format(log_name) + "\n".join(res)
-        self.release_detail.save()
+        # 用 set_log 追加，避免直接赋值与 _read_stdout 并发写产生竞态覆盖 ansible 输出
+        self.release_detail.set_log(
+            "{}信息如下：\n".format(log_name) + "\n".join(res),
+            self.user,
+            update_prompt=False,
+        )
 
     def deploy_config(self, module):
         """
@@ -479,9 +565,12 @@ class MdlReleaseDetailService(ReleaseDetailService):
         gitlab_client = GitlabClient()
         filenames = gitlab_client.list_directory_files(git_dir)
         if not filenames:
-            if module.type == 'config':
-                raise Exception("{} Git目录 '{}' 无文件，请确认配置文件已提交到 GitLab".format(module.release_object, git_dir))
-            self.release_detail.set_log("{} Git目录无文件，跳过配置发布".format(module.release_object), self.user)
+            # Git 目录为空：STG 等环境配置直接维护在 Consul，无需 Git→Consul 同步。
+            # 跳过本步骤，后续 ansible 会直接从 Consul 拉取配置到目标机器。
+            self.release_detail.set_log(
+                "{} Git目录 '{}' 无文件，跳过 Git→Consul 同步，将直接从 Consul 拉取配置".format(
+                    module.release_object, git_dir),
+                self.user)
             return
 
         self.release_detail.set_log("{} 开始配置发布，目录：{}，文件：{}".format(

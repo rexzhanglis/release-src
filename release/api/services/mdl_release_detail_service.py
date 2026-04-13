@@ -56,7 +56,8 @@ class MdlReleaseDetailService(ReleaseDetailService):
             timeout_per_machine = max(60, int(Constance.get_value("mdl_deploy_timeout_per_machine")))
         except Exception:
             timeout_per_machine = 300
-        UPGRADE_TIMEOUT = max(600, len(list(modules)) * timeout_per_machine)
+        # 每台机器除 ansible 本身外还有 GitLab/Consul/SSH/DB 等操作，额外预留 60s buffer
+        UPGRADE_TIMEOUT = max(600, len(list(modules)) * (timeout_per_machine + 60))
 
         self.release_detail.set_status("发布中")
 

@@ -12,20 +12,23 @@ class SshClient(object):
     def __init__(self, ip, username, password):
         self.client = paramiko.SSHClient()
         self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        self.client.connect(ip, username=username, password=password, timeout=5)
+        self.client.connect(ip, username=username, password=password,
+                            timeout=5, banner_timeout=15, auth_timeout=15)
 
     def send_cmd(self, cmd):
         stdin, stdout, stderr = self.client.exec_command(cmd, timeout=10)
-        if stderr.readline():
-            print(stderr.readline())
+        err = stderr.readline()
+        if err:
+            print(err)
             return []
         return stdout.readlines()
 
     def send_cmd2(self, cmd):
         """发送命令 但不关闭客户端"""
         stdin, stdout, stderr = self.client.exec_command(cmd, timeout=10)
-        if stderr.readline():
-            raise Exception("exec command {} error, {}".format(cmd, stderr.readline()))
+        err = stderr.readline()
+        if err:
+            raise Exception("exec command {} error, {}".format(cmd, err))
         return stdout.readlines()
 
     def close(self):

@@ -20,6 +20,6 @@ def send_to_enterprise_wechat(receiver, message):
         "content": message,
         "args": None
     }
-    res = requests.post(url=ENTERPRISE_WECHAT_URL, json=data, headers=headers).json()
+    res = requests.post(url=ENTERPRISE_WECHAT_URL, json=data, headers=headers, timeout=30).json()
     if res["message"] != 'Success':
         raise Exception(res["message"])

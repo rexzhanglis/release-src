@@ -20,7 +20,7 @@ class ConfClient(object):
 
     def _post(self, data, path):
         url = Constance.get_value(key="conf_base_url") + path
-        res = requests.post(url, json=data, headers={'Content-Type': 'application/json'}).json()
+        res = requests.post(url, json=data, headers={'Content-Type': 'application/json'}, timeout=30).json()
         if res["code"] != 200:
             raise Exception("调用配置发布接口失败 {} {}".format(str(res["message"]), data))
         return "success"

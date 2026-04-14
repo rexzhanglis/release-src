@@ -230,8 +230,8 @@ def refresh_systemd_cache():
             executor.submit(_fetch_systemd_for_host, h, ssh_user, ssh_pass, ansible_env): h
             for h in hosts
         }
-        for future in concurrent.futures.as_completed(futures):
-            host_id, services, error = future.result()
+        for future in concurrent.futures.as_completed(futures, timeout=120):
+            host_id, services, error = future.result(timeout=60)
             SystemdServiceCache.objects.update_or_create(
                 host_id=host_id,
                 defaults={'services': services, 'refreshed_at': now, 'error': error}

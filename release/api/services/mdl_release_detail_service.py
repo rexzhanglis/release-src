@@ -78,6 +78,15 @@ class MdlReleaseDetailService(ReleaseDetailService):
         def _watchdog():
             t.join(timeout=UPGRADE_TIMEOUT)
             if t.is_alive():
+                # 主动终止遗留的 ansible-playbook 子进程，防止僵尸进程占用资源
+                with _ansible_proc_lock:
+                    stale_proc = _ansible_proc_registry.pop(self.release_detail.id, None)
+                if stale_proc and stale_proc.poll() is None:
+                    stale_proc.kill()
+                    deploy_logger.warning(
+                        "[watchdog] 发布超时，强制终止 ansible-playbook pid=%s release_detail=%s",
+                        stale_proc.pid, self.release_detail.id,
+                    )
                 self.release_detail.set_log(
                     "发布超时（超过 {} 秒），自动标记为发布失败，请检查目标机器后点击失败重试或失败跳过".format(UPGRADE_TIMEOUT),
                     self.user,
@@ -551,6 +560,7 @@ class MdlReleaseDetailService(ReleaseDetailService):
         """
         获取最近1分钟内的日志
         """
+        import concurrent.futures as _cf
         mdl_server = MdlServer.objects.select_related('host').get(host__fqdn=server, service_name=service_name)
         ip = mdl_server.host.ip
         self.release_detail.set_log("开始抓取{}_{}_{}日志信息....".format(server, ip, service_name), self.user, update_prompt=False)
@@ -558,14 +568,22 @@ class MdlReleaseDetailService(ReleaseDetailService):
         username = Constance.get_value("ansible_ssh_user")
         password = Constance.get_value("ansible_ssh_pass")
         install_dir = mdl_server.install_dir
-        ssh = SshClient(ip=ip, username=username, password=password)
-        log_file = self._resolve_log_file(install_dir, mdl_server.consul_files, ssh)
+
+        def _do_ssh():
+            _ssh = SshClient(ip=ip, username=username, password=password)
+            _log_file = self._resolve_log_file(install_dir, mdl_server.consul_files, _ssh)
+            _cmd = """grep -a $(date '+%Y-%m-%d') {} | awk -v dt="$(date '+%Y-%m-%d %T' -d '-1 minutes')" -F, '$1 > dt'""".format(
+                _log_file)
+            _res = _ssh.send_cmd(_cmd)
+            _ssh.close()
+            return _log_file, _res
+
+        with _cf.ThreadPoolExecutor(max_workers=1) as _ex:
+            _future = _ex.submit(_do_ssh)
+            log_file, res = _future.result(timeout=60)
+
         log_name = log_file.split("/")[-1]
         self.release_detail.set_log("读取日志文件：{}".format(log_file), self.user, update_prompt=False)
-        cmd = """grep -a $(date '+%Y-%m-%d') {} | awk -v dt="$(date '+%Y-%m-%d %T' -d '-1 minutes')" -F, '$1 > dt'""".format(
-            log_file)
-        res = ssh.send_cmd(cmd)
-        ssh.close()
         # 用 set_log 追加，避免直接赋值与 _read_stdout 并发写产生竞态覆盖 ansible 输出
         self.release_detail.set_log(
             "{}信息如下：\n".format(log_name) + "\n".join(res),

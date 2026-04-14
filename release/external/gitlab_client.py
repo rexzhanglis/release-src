@@ -5,7 +5,7 @@ time: 2022/1/14 11:51
 """
 import gitlab
 
-gl = gitlab.Gitlab('http://git.datayes.com', private_token='aHo8e9gFFQGGqjeAE9x7')
+gl = gitlab.Gitlab('http://git.datayes.com', private_token='aHo8e9gFFQGGqjeAE9x7', timeout=30)
 
 class GitlabClient(object):
 

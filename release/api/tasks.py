@@ -69,9 +69,11 @@ def auto_release_task():
             threads.append(thread)
             thread.start()
             time.sleep(10)  # 暂停10s 同时刷新rancher应用商店会报错
-            # 等待所有线程完成
+            # 等待所有线程完成，单个线程最多等待 30 分钟，防止卡住整个定时任务
         for thread in threads:
-            thread.join()
+            thread.join(timeout=1800)
+            if thread.is_alive():
+                logger.warning("自动发布线程超时未完成: %s", thread.obj.name)
 
 
 if __name__ == '__main__':

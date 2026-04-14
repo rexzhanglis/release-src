@@ -19,7 +19,7 @@ class CmdbClient(object):
         """
         # # 通过cmdb获取对应的fqdn
         cmdb_url = "{}?ip={}".format(CMDB_SERVER_URL, ip)
-        data = requests.get(url=cmdb_url).json()
+        data = requests.get(url=cmdb_url, timeout=30).json()
         if len(data["data"]) == 1:
             return data["data"][0]
 

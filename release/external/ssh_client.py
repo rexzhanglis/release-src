@@ -9,11 +9,25 @@ import paramiko
 
 class SshClient(object):
 
-    def __init__(self, ip, username, password):
+    # 默认 transport socket 硬超时（秒）。即使 paramiko transport 线程卡在 TCP 读，
+    # OS 也会在该时间后抛 socket.timeout，避免无限阻塞。
+    DEFAULT_SOCK_TIMEOUT = 30
+
+    def __init__(self, ip, username, password, sock_timeout=DEFAULT_SOCK_TIMEOUT):
         self.client = paramiko.SSHClient()
         self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         self.client.connect(ip, username=username, password=password,
                             timeout=5, banner_timeout=15, auth_timeout=15)
+        # connect() 之后 transport 的底层 socket 默认是阻塞的（无超时）。
+        # 即便 exec_command(timeout=10) 设了 channel 级超时，paramiko 的 transport
+        # 后台线程仍可能卡在 socket.recv 上。给 transport socket 加硬超时是兜底。
+        transport = self.client.get_transport()
+        if transport is not None and transport.sock is not None and sock_timeout:
+            try:
+                transport.sock.settimeout(sock_timeout)
+            except Exception:
+                # 极少数自定义 transport 不支持 settimeout，忽略不影响主流程
+                pass
 
     def send_cmd(self, cmd):
         stdin, stdout, stderr = self.client.exec_command(cmd, timeout=10)

@@ -4,12 +4,24 @@ python version: 3
 time: 2021/4/29 14:16
 """
 
-import ldap
+try:
+    import ldap
+    from django_auth_ldap.config import LDAPSearch, GroupOfNamesType
+except ImportError:
+    # 测试环境（如 Windows 本地开发机）可能没装 python-ldap，
+    # 这里降级成 stub，让 settings 模块仍能导入。生产部署不受影响。
+    import types as _types
+    ldap = _types.SimpleNamespace(SCOPE_SUBTREE=2, SCOPE_BASE=0, SCOPE_ONELEVEL=1)
+
+    class LDAPSearch(object):
+        def __init__(self, *a, **kw):
+            pass
+
+    class GroupOfNamesType(object):
+        def __init__(self, *a, **kw):
+            pass
 
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
-
-
-from django_auth_ldap.config import LDAPSearch, GroupOfNamesType
 
 AUTH_LDAP_SERVER_URI = 'ldap://sh-it-ad02.datayes.com:389'
 AUTH_LDAP_BIND_DN = "CN=SVC-Jenkins,OU=SVC,OU=ServiceAccounts,DC=datayes,DC=com"

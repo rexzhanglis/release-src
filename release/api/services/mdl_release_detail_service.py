@@ -504,12 +504,19 @@ class MdlReleaseDetailService(ReleaseDetailService):
 
         # SshClient.connect(timeout=5) 只覆盖 TCP 握手，SSH 认证阶段可能无限挂住。
         # 用线程池套硬超时，超时后返回空串（等同于首次部署，不影响主流程）。
+        #
+        # ⚠️ 不能用 `with ThreadPoolExecutor(...) as ex:` —— with 块退出时会调
+        # executor.shutdown(wait=True)，即使 future.result() 已经超时，它仍会
+        # 等待 SSH 线程真正结束。若 paramiko 卡在 TCP 层，OS 超时需 10~30 分钟，
+        # 导致整个部署主线程沉默 15 分钟，并顺带让 MySQL 连接空闲超时断掉。
+        # 改用 shutdown(wait=False)，超时后立即放弃线程，主流程继续。
         t_start = time.time()
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                future = ex.submit(_ssh_get)
-                res = future.result(timeout=30)
+            future = executor.submit(_ssh_get)
+            res = future.result(timeout=30)
         except concurrent.futures.TimeoutError:
+            executor.shutdown(wait=False)
             deploy_logger.warning(
                 "[%s] _get_current_version: SSH timeout after %.1fs  server=%s service=%s ip=%s cmd=%s "
                 "release_detail=%s — treating as first deploy",
@@ -517,6 +524,7 @@ class MdlReleaseDetailService(ReleaseDetailService):
             )
             return ''
         except Exception as e:
+            executor.shutdown(wait=False)
             deploy_logger.warning(
                 "[%s] _get_current_version: SSH error after %.1fs  server=%s service=%s ip=%s "
                 "error=%s(%s) release_detail=%s — treating as first deploy",
@@ -524,6 +532,7 @@ class MdlReleaseDetailService(ReleaseDetailService):
                 type(e).__name__, e, self.release_detail.id,
             )
             return ''
+        executor.shutdown(wait=False)
         return res[0].strip() if res else ''
 
     def _resolve_log_file(self, install_dir, consul_files, ssh_client):
@@ -591,9 +600,15 @@ class MdlReleaseDetailService(ReleaseDetailService):
             _ssh.close()
             return _log_file, _res
 
-        with _cf.ThreadPoolExecutor(max_workers=1) as _ex:
+        # 同 _get_current_version：不用 with，避免 shutdown(wait=True) 在 SSH 卡住时阻塞
+        _ex = _cf.ThreadPoolExecutor(max_workers=1)
+        try:
             _future = _ex.submit(_do_ssh)
             log_file, res = _future.result(timeout=60)
+        except Exception:
+            _ex.shutdown(wait=False)
+            raise
+        _ex.shutdown(wait=False)
 
         log_name = log_file.split("/")[-1]
         self.release_detail.set_log("读取日志文件：{}".format(log_file), self.user, update_prompt=False)

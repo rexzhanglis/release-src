@@ -11,11 +11,14 @@ from rest_framework import viewsets, serializers
 from rest_framework.decorators import action
 
 from api.exception import CustomRuntimeException
-from api.models import ReleaseDetail, ReleasePlan
+from api.models import ReleaseDetail, ReleasePlan, MdlReleaseContent
 from api.permissions.edit_permission import ReleaseDetailEditPermission
 from api.services.mdl_release_detail_service import MdlReleaseDetailService
 from api.services.rancher_release_detail_service import RancherReleaseDetailService
 from common.utils.apiutil import ApiResponse
+
+# 标记 ReleaseDetail 处于"运行中"的状态值
+_MDL_RUNNING_STATUSES = ["升级中", "发布中"]
 
 
 class ReleaseDetailSerializer(serializers.ModelSerializer):
@@ -51,12 +54,70 @@ class ReleaseDetailViewSet(viewsets.ModelViewSet):
     def deploy(self, request, *args, **kwargs):
         """
         发布
+
+        MDL 并发准入控制（按 (fqdn, service_name) 互斥）：
+          1) 同一计划在跑 → 拦（幂等防双击）
+          2) 不同计划但目标 (host, service) 与运行中的 MDL 计划重叠 → 拦
+          3) 完全不重叠 → 允许并发
         """
-        if ReleasePlan.objects.get(name=request.data["name"]).project == 'MDL' and ReleaseDetail.objects.filter(
-                status__in=["升级中", "发布中"], release_plan__project="MDL").exists():
-            raise CustomRuntimeException(msg="mdl暂时不支持多个任务同时发布，请等正在发布的任务完成后再发布")
-        self._get_release_service(name=request.data["name"])(name=request.data["name"], user=request.user).start()
+        name = request.data["name"]
+        plan = ReleasePlan.objects.get(name=name)
+        if plan.project == 'MDL':
+            self._check_mdl_deploy_conflict(plan)
+        self._get_release_service(name=name)(name=name, user=request.user).start()
         return ApiResponse(data="success")
+
+    @staticmethod
+    def _extract_targets(plan):
+        """
+        从 plan 的 MdlReleaseContent 中提取仍占用资源的 (fqdn, service_name) 集合。
+          - is_release=True：本次需要发布的模块
+          - status != 'success'：尚未完成的模块（success 视为已释放占用）
+        release_object 格式：fqdn__ip__service_name；不规范条目静默忽略。
+        """
+        targets = set()
+        qs = MdlReleaseContent.objects.filter(
+            release_plan=plan, is_release=True,
+        ).exclude(status='success').values_list('release_object', flat=True)
+        for ro in qs:
+            parts = (ro or '').split('__')
+            if len(parts) == 3:
+                targets.add((parts[0], parts[2]))
+        return targets
+
+    @classmethod
+    def _check_mdl_deploy_conflict(cls, plan):
+        """
+        发起 MDL 部署前的并发准入控制。冲突时抛 CustomRuntimeException。
+        """
+        # 规则1：同一计划在跑时再次 deploy → 拦
+        if ReleaseDetail.objects.filter(
+                release_plan=plan, status__in=_MDL_RUNNING_STATUSES).exists():
+            raise CustomRuntimeException(msg="该发布计划正在执行中，请勿重复点击")
+
+        # 规则2/3：跨计划检查 (host, service) 是否与运行中 MDL 计划重叠
+        new_targets = cls._extract_targets(plan)
+        if not new_targets:
+            return
+
+        running_plans = ReleasePlan.objects.filter(
+            project='MDL',
+            releasedetail__status__in=_MDL_RUNNING_STATUSES,
+        ).exclude(id=plan.id).distinct()
+
+        conflicts = []
+        for rp in running_plans:
+            overlap = new_targets & cls._extract_targets(rp)
+            for host, svc in overlap:
+                conflicts.append((rp.name, host, svc))
+
+        if conflicts:
+            detail = "; ".join(
+                "{}({}/{})".format(p, h, s) for p, h, s in conflicts
+            )
+            raise CustomRuntimeException(
+                msg="以下目标正在被其他发布计划占用，请等待完成后再试: " + detail
+            )
 
 
     @action(detail=False, methods=["post"], url_path="suspend")

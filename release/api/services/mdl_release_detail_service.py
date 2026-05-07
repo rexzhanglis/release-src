@@ -168,13 +168,26 @@ class MdlReleaseDetailService(ReleaseDetailService):
                 self.release_detail.set_status("暂停")
 
         except Exception as ex:
-            self.release_detail.set_log("{} {} 升级失败，错误：{}".format(module.release_object, module.release_version, ex),
-                                        user=self.user,
-                                        level="error")
+            from django.db import close_old_connections
+            # MySQL gone away 时连接已断，必须先重建连接，否则后续 set_log/set_status 也会抛异常
+            # 导致状态永远卡在"发布中"
+            close_old_connections()
             deploy_logger.error("[%s] plan=%s module=%s version=%s 升级失败 error=%s",
                                 self.user, self.release_plan.name, module.release_object, module.release_version, ex)
-            self.release_detail.set_status("发布失败")
-            module.set_status("error")
+            try:
+                self.release_detail.set_log(
+                    "{} {} 升级失败，错误：{}".format(module.release_object, module.release_version, ex),
+                    user=self.user, level="error")
+            except Exception as _log_ex:
+                deploy_logger.error("[%s] set_log failed in except block: %s", self.user, _log_ex)
+            try:
+                self.release_detail.set_status("发布失败")
+            except Exception as _st_ex:
+                deploy_logger.error("[%s] set_status(发布失败) failed: %s — status may be stuck", self.user, _st_ex)
+            try:
+                module.set_status("error")
+            except Exception as _mod_ex:
+                deploy_logger.error("[%s] module.set_status(error) failed: %s", self.user, _mod_ex)
             raise ex
         finally:
             # 清理本次部署产生的临时 hosts/host_vars 文件

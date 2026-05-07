@@ -233,19 +233,28 @@ class MdlReleaseDetailService(ReleaseDetailService):
         stderr_lines = []
 
         def _read_stdout(pipe):
+            _last_conn_reset = time.monotonic()
             for i, line in enumerate(pipe):
                 line = line.rstrip('\n')
                 stdout_lines.append(line)
-                # 每 30 行检查一次连接，防止长时间无输出后连接失效
-                if i % 30 == 0:
+                # 每 30 秒（基于时间而非行数）主动重置连接，防止 MySQL 空闲超时
+                _now = time.monotonic()
+                if _now - _last_conn_reset >= 30:
                     close_old_connections()
+                    _last_conn_reset = _now
                 # 实时写入发布日志，方便用户看到当前卡在哪个 task
                 # 必须捕获异常：set_log 失败若不处理会导致线程崩溃，
                 # stdout pipe 无人消费，ansible 写满缓冲区后卡死整个部署
                 try:
                     self.release_detail.set_log(line, self.user, update_prompt=False)
                 except Exception as _e:
-                    deploy_logger.warning("set_log failed (stdout line %d): %s", i, _e)
+                    deploy_logger.warning("set_log failed (stdout line %d): %s, reconnect and retry", i, _e)
+                    try:
+                        close_old_connections()
+                        _last_conn_reset = time.monotonic()
+                        self.release_detail.set_log(line, self.user, update_prompt=False)
+                    except Exception as _e2:
+                        deploy_logger.warning("set_log retry failed (stdout line %d): %s", i, _e2)
 
         def _read_stderr(pipe):
             for line in pipe:

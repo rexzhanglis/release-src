@@ -11,10 +11,18 @@ mdl和rancher两种类型发布：
 
 """
 import datetime
+import logging
+import os
 
 from django.db import models
 
 from common.basemodels import TimestampedModel
+
+# ReleaseDetail 发布日志文件目录（按 release_detail_{id}.log 命名）
+# Linux 部署写死，未来如需变更直接改这里
+RELEASE_LOG_DIR = '/datayes/release/logs'
+
+_log_writer_logger = logging.getLogger(__name__)
 
 
 class ReleasePlan(TimestampedModel):
@@ -188,13 +196,33 @@ class ReleaseDetail(TimestampedModel):
     active = models.IntegerField("流程图当前发布的位置", default=1)
 
     def set_log(self, log, user, level="info", update_prompt=True):
-        if self.log:
-            self.log = self.log + "{} {} {} {}".format(str(datetime.datetime.now()), level, user, log) + "\n"
-        else:
-            self.log = "{} {} {} {}".format(str(datetime.datetime.now()), level, user, log) + "\n"
+        """
+        发布日志写本地文件，DB 上不再追加 log 字段。
+
+        - 文件路径：{RELEASE_LOG_DIR}/release_detail_{id}.log
+        - 行格式：与历史一致 "{ts} {level} {user} {msg}\n"
+        - 写文件异常必须被吞：_read_stdout 线程若抛会导致 ansible
+          stdout pipe 无人消费，进而卡死整个部署进程。
+        - prompt 仍按 update_prompt 入库；仅 save(update_fields=['prompt'])
+          以减小写入体积，避免覆盖其他字段。
+        """
+        line = "{} {} {} {}\n".format(datetime.datetime.now(), level, user, log)
+        try:
+            os.makedirs(RELEASE_LOG_DIR, exist_ok=True)
+            log_path = os.path.join(
+                RELEASE_LOG_DIR, "release_detail_{}.log".format(self.id),
+            )
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(line)
+        except Exception as ex:
+            # 关键：不向上抛，避免拖死 _read_stdout 线程导致 ansible 卡死
+            _log_writer_logger.warning(
+                "write release log file failed (detail_id=%s): %s", self.id, ex,
+            )
+
         if update_prompt:
             self.prompt = log
-        self.save()
+            self.save(update_fields=['prompt'])
 
     def set_status(self, status):
         self.status = status

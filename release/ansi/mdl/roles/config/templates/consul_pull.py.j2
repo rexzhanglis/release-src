@@ -17,18 +17,23 @@ FILES = [f.strip() for f in FILE_STR.split(',') if f.strip()]
 
 def fetch_and_save_file(consul_url, filename):
     req = Request(consul_url, headers={'X-Consul-Token': CONSUL_TOKEN})
-    try:
-        with urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            value = base64.b64decode(data[0]['Value'])
-            with open(os.path.join(FILE_DIR, filename), 'wb') as f:
-                f.write(value)
-    except HTTPError as e:
-        print('Failed to get %s: HTTP %s' % (filename, e.code))
-        exit(1)
-    except URLError as e:
-        print('Failed to get %s: %s' % (filename, e.reason))
-        exit(1)
+    last_err = None
+    for attempt in range(2):
+        try:
+            with urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                value = base64.b64decode(data[0]['Value'])
+                with open(os.path.join(FILE_DIR, filename), 'wb') as f:
+                    f.write(value)
+            return
+        except HTTPError as e:
+            print('Failed to get %s: HTTP %s' % (filename, e.code))
+            exit(1)
+        except URLError as e:
+            last_err = e
+            print('Attempt %d failed to get %s: %s, retrying...' % (attempt + 1, filename, e.reason))
+    print('Failed to get %s after retries: %s' % (filename, last_err.reason))
+    exit(1)
 
 
 def get_conf():

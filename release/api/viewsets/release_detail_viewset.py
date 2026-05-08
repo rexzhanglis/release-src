@@ -4,6 +4,7 @@ python version: 3
 time: 2021/10/11 10:26
 """
 import datetime
+import logging
 import os
 
 from django.forms import model_to_dict
@@ -18,6 +19,8 @@ from api.permissions.edit_permission import ReleaseDetailEditPermission
 from api.services.mdl_release_detail_service import MdlReleaseDetailService
 from api.services.rancher_release_detail_service import RancherReleaseDetailService
 from common.utils.apiutil import ApiResponse
+
+_viewset_logger = logging.getLogger(__name__)
 
 # 标记 ReleaseDetail 处于"运行中"的状态值
 _MDL_RUNNING_STATUSES = ["升级中", "发布中"]
@@ -69,8 +72,11 @@ class ReleaseDetailViewSet(viewsets.ModelViewSet):
                 return f.read()
         except FileNotFoundError:
             return detail.log or ""
-        except Exception:
+        except Exception as ex:
             # 读异常时回退 DB 列，不影响整个接口
+            _viewset_logger.warning(
+                "read release log file failed (detail_id=%s): %s", detail.id, ex,
+            )
             return detail.log or ""
 
     @action(detail=False, methods=["post"], url_path="deploy")

@@ -46,7 +46,7 @@ from external.ssh_client import SshClient
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "release.settings")
 django.setup()
 
-from django.db import close_old_connections
+from django.db import close_old_connections, connection as db_connection
 
 from api.models import MdlReleaseContent
 from api.services.release_detail_service import ReleaseDetailService
@@ -170,9 +170,10 @@ class MdlReleaseDetailService(ReleaseDetailService):
                 self.release_detail.set_status("暂停")
 
         except Exception as ex:
-            # MySQL gone away 时连接已断，必须先重建连接，否则后续 set_log/set_status 也会抛异常
-            # 导致状态永远卡在"发布中"
-            close_old_connections()
+            # MySQL gone away 时连接已断，必须先强制关闭连接，否则后续 set_log/set_status 也会抛异常
+            # 导致状态永远卡在"发布中"。close_old_connections() 对 errors_occurred=False 的死连接
+            # 无效，必须用 db_connection.close() 强制关闭，保证下次查询重建。
+            db_connection.close()
             deploy_logger.error("[%s] plan=%s module=%s version=%s 升级失败 error=%s",
                                 self.user, self.release_plan.name, module.release_object, module.release_version, ex)
             try:
@@ -271,14 +272,17 @@ class MdlReleaseDetailService(ReleaseDetailService):
             proc.wait(timeout=timeout_per_machine)
             t_out.join(timeout=5)
             t_err.join(timeout=5)
-            # ansible 执行完后连接可能已失效，重建后再做后续 DB 操作
-            close_old_connections()
+            # ansible 执行期间主线程无 DB 操作，连接可能已被 MySQL 服务端关闭。
+            # close_old_connections() 只关闭 Django 认为"已出错"的连接，无法覆盖
+            # 服务端单方面断开的情况（errors_occurred=False）。
+            # 用 db_connection.close() 强制关闭，保证后续 DB 操作使用新连接。
+            db_connection.close()
             return '\n'.join(stdout_lines), '\n'.join(stderr_lines), proc.returncode
         except subprocess.TimeoutExpired:
             proc.kill()
             t_out.join(timeout=5)
             t_err.join(timeout=5)
-            close_old_connections()
+            db_connection.close()
             last_lines = stdout_lines[-10:] or stderr_lines[-10:]
             raise Exception(
                 "ansible-playbook 执行超时（超过 {}s），进程已终止。最后输出：\n{}".format(

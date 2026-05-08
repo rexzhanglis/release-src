@@ -18,14 +18,11 @@ FILES = [f.strip() for f in FILE_STR.split(',') if f.strip()]
 def fetch_and_save_file(consul_url, filename):
     req = Request(consul_url, headers={'X-Consul-Token': CONSUL_TOKEN})
     try:
-        resp = urlopen(req)
-        try:
+        with urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read().decode('utf-8'))
-        finally:
-            resp.close()
-        value = base64.b64decode(data[0]['Value'])
-        with open(os.path.join(FILE_DIR, filename), 'wb') as f:
-            f.write(value)
+            value = base64.b64decode(data[0]['Value'])
+            with open(os.path.join(FILE_DIR, filename), 'wb') as f:
+                f.write(value)
     except HTTPError as e:
         print('Failed to get %s: HTTP %s' % (filename, e.code))
         exit(1)

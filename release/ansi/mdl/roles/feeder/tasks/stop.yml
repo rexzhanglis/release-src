@@ -8,13 +8,4 @@
   service: name={{ service_name }} state=stopped
   become: true
 
-- name: wait for executable process to exit
-  shell: pgrep -x {{ executable | default('feeder_handler') }}
-  register: _pgrep
-  until: _pgrep.rc != 0
-  retries: 30
-  delay: 1
-  failed_when: false
-  become: true
-
 

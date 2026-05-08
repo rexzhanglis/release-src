@@ -97,3 +97,48 @@ class TestSetLogWritesFile(_SetLogFileBase):
         with patch('builtins.open', side_effect=OSError("disk full")):
             # 不应抛异常
             self.detail.set_log("line", self.user, update_prompt=False)
+
+
+from rest_framework.test import APIRequestFactory, force_authenticate
+
+from api.viewsets.release_detail_viewset import ReleaseDetailViewSet
+
+
+class TestGetReleaseDetailInfoLogSource(_SetLogFileBase):
+    """
+    get_release_detail_info 响应里 data['log'] 的来源：
+      - 文件存在 → 文件内容
+      - 文件不存在 → 回退 DB log 列（兼容旧记录）
+    """
+
+    def _call_get_release_detail_info(self):
+        factory = APIRequestFactory()
+        request = factory.get(
+            '/api/releaseDetail/get_release_detail_info/',
+            {'name': self.plan.name},
+        )
+        force_authenticate(request, user=self.user)
+        view = ReleaseDetailViewSet.as_view({'get': 'get_release_detail_info'})
+        response = view(request)
+        return response
+
+    def test_log_comes_from_file_when_file_exists(self):
+        # 写一行触发文件创建
+        self.detail.set_log("from-file", self.user, update_prompt=False)
+
+        response = self._call_get_release_detail_info()
+        self.assertEqual(response.status_code, 200)
+        log_value = response.data['data']['log']
+        self.assertIn("from-file", log_value)
+
+    def test_log_falls_back_to_db_column_when_file_missing(self):
+        # 模拟旧记录：文件不存在，DB log 列有值
+        self.assertFalse(os.path.exists(self._log_path()))
+        ReleaseDetail.objects.filter(id=self.detail.id).update(
+            log="legacy-from-db\n",
+        )
+
+        response = self._call_get_release_detail_info()
+        self.assertEqual(response.status_code, 200)
+        log_value = response.data['data']['log']
+        self.assertIn("legacy-from-db", log_value)

@@ -4,12 +4,14 @@ python version: 3
 time: 2021/10/11 10:26
 """
 import datetime
+import os
 
 from django.forms import model_to_dict
 from django.utils import timezone
 from rest_framework import viewsets, serializers
 from rest_framework.decorators import action
 
+import api.models as api_models
 from api.exception import CustomRuntimeException
 from api.models import ReleaseDetail, ReleasePlan, MdlReleaseContent
 from api.permissions.edit_permission import ReleaseDetailEditPermission
@@ -35,20 +37,41 @@ class ReleaseDetailViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], url_path="get_release_detail_info")
     def get_release_detail_info(self, request, *args, **kwargs):
         """
-        获取发布的详细信息
+        获取发布的详细信息。
+
+        log 字段来源：
+          - 优先读文件 {RELEASE_LOG_DIR}/release_detail_{id}.log
+          - 文件不存在时回退到 DB log 列（兼容旧记录）
         """
         name = request.query_params.get("name")
         if name:
             release_plan = ReleasePlan.objects.get(name=name)
             obj = ReleaseDetail.objects.filter(release_plan=release_plan)
             if obj:
-                data = model_to_dict(obj[0])
-                data["created_time"] = obj[0].created_time
-                data["last_updated_time"] = obj[0].last_updated_time
+                detail = obj[0]
+                data = model_to_dict(detail)
+                data["created_time"] = detail.created_time
+                data["last_updated_time"] = detail.last_updated_time
                 data["step_status"] = release_plan.get_all_release_contents_status()
+                data["log"] = self._read_release_log(detail)
                 return ApiResponse(data=data)
             return ApiResponse(data=None)
         raise CustomRuntimeException("请输入name字段")
+
+    @staticmethod
+    def _read_release_log(detail):
+        """文件存在则读文件，否则回退 DB log 列。读异常一律回退。"""
+        log_path = os.path.join(
+            api_models.RELEASE_LOG_DIR, "release_detail_{}.log".format(detail.id),
+        )
+        try:
+            with open(log_path, encoding='utf-8') as f:
+                return f.read()
+        except FileNotFoundError:
+            return detail.log or ""
+        except Exception:
+            # 读异常时回退 DB 列，不影响整个接口
+            return detail.log or ""
 
     @action(detail=False, methods=["post"], url_path="deploy")
     def deploy(self, request, *args, **kwargs):

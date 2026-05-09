@@ -1,6 +1,7 @@
 import os
 import base64
 import json
+import contextlib
 
 try:
     from urllib.request import Request, urlopen
@@ -19,7 +20,7 @@ FILES = [f.strip() for f in FILE_STR.split(',') if f.strip()]
 def fetch_and_save_file(consul_url, filename):
     req = Request(consul_url, headers={'X-Consul-Token': CONSUL_TOKEN})
     try:
-        with urlopen(req, timeout=30) as resp:
+        with contextlib.closing(urlopen(req, timeout=30)) as resp:
             data = json.loads(resp.read().decode('utf-8'))
             value = base64.b64decode(data[0]['Value'])
             with open(os.path.join(FILE_DIR, filename), 'wb') as f:

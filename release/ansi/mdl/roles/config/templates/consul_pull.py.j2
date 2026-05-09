@@ -1,6 +1,7 @@
 import os
 import base64
 import json
+import contextlib
 try:
     from urllib.request import Request, urlopen
     from urllib.error import HTTPError, URLError
@@ -20,7 +21,7 @@ def fetch_and_save_file(consul_url, filename):
     last_err = None
     for attempt in range(2):
         try:
-            with urlopen(req, timeout=30) as resp:
+            with contextlib.closing(urlopen(req, timeout=30)) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 value = base64.b64decode(data[0]['Value'])
                 with open(os.path.join(FILE_DIR, filename), 'wb') as f:

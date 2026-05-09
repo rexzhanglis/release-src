@@ -31,6 +31,8 @@ services:
       - OVERWRITE_CONSUL_PATH_FOLDER=/container/devops/devops-release/latest/
     ports:
       - "8000:8000"
+    volumes:
+      - release_logs:/datayes/release/logs
 
   # ── 前端服务 ───────────────────────────────────────────────
   release-web:
@@ -62,3 +64,4 @@ services:
 
 volumes:
   db_data:
+  release_logs:

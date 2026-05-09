@@ -10,16 +10,6 @@
   become: true
 
 - name: backup files in install_dir (exclude subdirectories)
-  find:
-    paths: "{{ install_dir }}"
-    file_type: file
-    depth: 1
-  register: files_to_backup
-
-- name: copy found files to backup directory
-  copy:
-    src: "{{ item.path }}"
-    dest: "{{ backup_dir }}/"
-    remote_src: yes
-  loop: "{{ files_to_backup.files }}"
+  shell: >
+    find {{ install_dir }} -maxdepth 1 -type f -exec cp {} {{ backup_dir }}/ \;
   become: true

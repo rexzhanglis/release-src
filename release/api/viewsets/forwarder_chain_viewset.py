@@ -1131,6 +1131,41 @@ class ForwarderChainViewSet(viewsets.ViewSet):
                 })
                 existing_edge_set.add((fwd_ip, client_ip))
 
+        # 配置链路为空（消息未在 feeder 配置中显式订阅）但心跳发现了活跃转发机时，
+        # 用心跳数据构建 forwarder 节点及下游连接，使拓扑图能展示运行时链路。
+        # 典型场景：CZCE/CFFEX 某些消息号（如 7.5、8.5）只在运行时订阅，未写入 feeder_handler.cfg。
+        if not merged_nodes and live_results:
+            for live_item in live_results:
+                fwd_ip = live_item.get('forwarder_ip', '')
+                fwd_fqdn = live_item.get('forwarder_fqdn', '') or fwd_ip
+                client_addr = live_item.get('client_address', '')
+                client_ip = client_addr.rsplit(':', 1)[0] if ':' in client_addr else client_addr
+                svcs = live_item.get('matched_subscriptions', [])
+                if fwd_ip and fwd_ip not in merged_nodes:
+                    merged_nodes[fwd_ip] = {
+                        'id': fwd_ip, 'node': fwd_ip,
+                        'instance': fwd_fqdn,
+                        'type': 'forwarder',
+                        'services': svcs,
+                        'service_type': '',
+                    }
+                if client_ip and client_ip not in merged_nodes:
+                    merged_nodes[client_ip] = {
+                        'id': client_ip, 'node': client_ip,
+                        'instance': client_addr,
+                        'type': 'unknown',
+                        'services': svcs,
+                        'service_type': '',
+                    }
+                if fwd_ip and client_ip and (fwd_ip, client_ip) not in existing_edge_set:
+                    merged_edges.append({
+                        'from': fwd_ip,
+                        'to': client_ip,
+                        'services': svcs,
+                        'source': 'live',
+                    })
+                    existing_edge_set.add((fwd_ip, client_ip))
+
         service_label = SERVICE_ID_MAP.get(service_id, '') if service_id else ''
 
         return ApiResponse(data={

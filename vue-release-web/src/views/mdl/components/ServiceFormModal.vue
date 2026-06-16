@@ -26,29 +26,29 @@
         </el-select>
       </el-form-item>
       <el-form-item label="服务名" prop="service_name">
-        <el-input v-model="form.service_name" placeholder="如 mdl-forward1" :disabled="isEdit" @focus="fillFromPlaceholder('service_name', '如 mdl-forward1')" />
+        <el-input v-model="form.service_name" placeholder="如 mdl-forward1" :disabled="isEdit" @click.native="fillFromPlaceholder('service_name', '如 mdl-forward1')" />
       </el-form-item>
       <el-form-item label="角色名称" prop="role_name">
-        <el-input v-model="form.role_name" placeholder="如 forward" @focus="fillFromPlaceholder('role_name', '如 forward')" />
+        <el-input v-model="form.role_name" placeholder="如 forward" @click.native="fillFromPlaceholder('role_name', '如 forward')" />
       </el-form-item>
       <el-form-item label="安装目录" prop="install_dir">
-        <el-input v-model="form.install_dir" placeholder="/datayes/forward/bin" class="mono-input" @focus="fillFromPlaceholder('install_dir', '/datayes/forward/bin')" />
+        <el-input v-model="form.install_dir" placeholder="/datayes/forward/bin" class="mono-input" @click.native="fillFromPlaceholder('install_dir', '/datayes/forward/bin')" />
       </el-form-item>
       <el-form-item label="备份目录" prop="backups_dir">
-        <el-input v-model="form.backups_dir" placeholder="/datayes/forward/backup" class="mono-input" @focus="fillFromPlaceholder('backups_dir', '/datayes/forward/backup')" />
+        <el-input v-model="form.backups_dir" placeholder="/datayes/forward/backup" class="mono-input" @click.native="fillFromPlaceholder('backups_dir', '/datayes/forward/backup')" />
       </el-form-item>
       <el-form-item label="Consul 地址" prop="consul_space">
-        <el-input v-model="form.consul_space" placeholder="如 http://10.x.x.x:8500/v1/kv/..." class="mono-input" @focus="fillFromPlaceholder('consul_space', '如 http://10.x.x.x:8500/v1/kv/...')" />
+        <el-input v-model="form.consul_space" placeholder="如 http://10.x.x.x:8500/v1/kv/..." class="mono-input" @click.native="fillFromPlaceholder('consul_space', '如 http://10.x.x.x:8500/v1/kv/...')" />
       </el-form-item>
       <el-form-item label="Consul Token" prop="consul_token">
         <el-input v-model="form.consul_token" placeholder="Consul ACL Token" show-password />
       </el-form-item>
       <el-form-item label="配置文件" prop="consul_files">
-        <el-input v-model="form.consul_files" placeholder="feeder_handler.cfg,feeder_receiver.cfg" @focus="fillFromPlaceholder('consul_files', 'feeder_handler.cfg,feeder_receiver.cfg')" />
+        <el-input v-model="form.consul_files" placeholder="feeder_handler.cfg,feeder_receiver.cfg" @click.native="fillFromPlaceholder('consul_files', 'feeder_handler.cfg,feeder_receiver.cfg')" />
         <div style="font-size:11px;color:#909399;margin-top:4px">多个文件用逗号分隔</div>
       </el-form-item>
       <el-form-item label="可执行文件名" prop="executable">
-        <el-input v-model="form.executable" placeholder="feeder_handler" @focus="fillFromPlaceholder('executable', 'feeder_handler')" />
+        <el-input v-model="form.executable" placeholder="feeder_handler" @click.native="fillFromPlaceholder('executable', 'feeder_handler')" />
         <div style="font-size:11px;color:#909399;margin-top:4px">systemd ExecStart 中的可执行文件名</div>
       </el-form-item>
       <el-form-item label="配置 Git URL" prop="config_git_url">

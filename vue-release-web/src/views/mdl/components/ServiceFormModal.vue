@@ -26,29 +26,29 @@
         </el-select>
       </el-form-item>
       <el-form-item label="服务名" prop="service_name">
-        <el-input v-model="form.service_name" placeholder="如 mdl-forward1" :disabled="isEdit" />
+        <el-input v-model="form.service_name" placeholder="如 mdl-forward1" :disabled="isEdit" @focus="fillFromPlaceholder('service_name', '如 mdl-forward1')" />
       </el-form-item>
       <el-form-item label="角色名称" prop="role_name">
-        <el-input v-model="form.role_name" placeholder="如 forward" />
+        <el-input v-model="form.role_name" placeholder="如 forward" @focus="fillFromPlaceholder('role_name', '如 forward')" />
       </el-form-item>
       <el-form-item label="安装目录" prop="install_dir">
-        <el-input v-model="form.install_dir" placeholder="/datayes/forward/bin" class="mono-input" />
+        <el-input v-model="form.install_dir" placeholder="/datayes/forward/bin" class="mono-input" @focus="fillFromPlaceholder('install_dir', '/datayes/forward/bin')" />
       </el-form-item>
       <el-form-item label="备份目录" prop="backups_dir">
-        <el-input v-model="form.backups_dir" placeholder="/datayes/forward/backup" class="mono-input" />
+        <el-input v-model="form.backups_dir" placeholder="/datayes/forward/backup" class="mono-input" @focus="fillFromPlaceholder('backups_dir', '/datayes/forward/backup')" />
       </el-form-item>
       <el-form-item label="Consul 地址" prop="consul_space">
-        <el-input v-model="form.consul_space" placeholder="如 http://10.x.x.x:8500/v1/kv/..." class="mono-input" />
+        <el-input v-model="form.consul_space" placeholder="如 http://10.x.x.x:8500/v1/kv/..." class="mono-input" @focus="fillFromPlaceholder('consul_space', '如 http://10.x.x.x:8500/v1/kv/...')" />
       </el-form-item>
       <el-form-item label="Consul Token" prop="consul_token">
         <el-input v-model="form.consul_token" placeholder="Consul ACL Token" show-password />
       </el-form-item>
       <el-form-item label="配置文件" prop="consul_files">
-        <el-input v-model="form.consul_files" placeholder="feeder_handler.cfg,feeder_receiver.cfg" />
+        <el-input v-model="form.consul_files" placeholder="feeder_handler.cfg,feeder_receiver.cfg" @focus="fillFromPlaceholder('consul_files', 'feeder_handler.cfg,feeder_receiver.cfg')" />
         <div style="font-size:11px;color:#909399;margin-top:4px">多个文件用逗号分隔</div>
       </el-form-item>
       <el-form-item label="可执行文件名" prop="executable">
-        <el-input v-model="form.executable" placeholder="feeder_handler" />
+        <el-input v-model="form.executable" placeholder="feeder_handler" @focus="fillFromPlaceholder('executable', 'feeder_handler')" />
         <div style="font-size:11px;color:#909399;margin-top:4px">systemd ExecStart 中的可执行文件名</div>
       </el-form-item>
       <el-form-item label="配置 Git URL" prop="config_git_url">
@@ -106,6 +106,9 @@ export default {
     isEdit() { return !!(this.server && this.server.id) },
   },
   watch: {
+    // consul_space 或 consul_files 变化时，若 git URL 为空则自动推导
+    'form.consul_space'(val) { this.autoFillGitUrl() },
+    'form.consul_files'(val) { this.autoFillGitUrl() },
     value(v) {
       if (v) {
         if (this.server) {
@@ -127,6 +130,25 @@ export default {
     },
   },
   methods: {
+    // 从 consul_space 推导 config_git_url（仅当 git URL 为空时）
+    autoFillGitUrl() {
+      if (this.form.config_git_url) return
+      const consulSpace = this.form.consul_space || ''
+      const consulFiles = this.form.consul_files || ''
+      const CONSUL_PREFIX = '/v1/kv/configs/mdl/'
+      const idx = consulSpace.indexOf(CONSUL_PREFIX)
+      if (idx === -1) return
+      const commonPath = consulSpace.slice(idx + CONSUL_PREFIX.length).replace(/\/$/, '')
+      if (!commonPath) return
+      const firstFile = consulFiles.split(',')[0].trim()
+      if (!firstFile) return
+      this.form.config_git_url = `http://git.datayes.com/consul/mdl/-/blob/master/${commonPath}/${firstFile}`
+    },
+    fillFromPlaceholder(field, placeholder) {
+      if (this.form[field] !== '' && this.form[field] !== null && this.form[field] !== undefined) return
+      // 去掉"如 "示例前缀，直接填入实际值
+      this.form[field] = placeholder.startsWith('如 ') ? placeholder.slice(2) : placeholder
+    },
     onOpen() {
       this.copySourceId = null
       if (!this.isEdit) {

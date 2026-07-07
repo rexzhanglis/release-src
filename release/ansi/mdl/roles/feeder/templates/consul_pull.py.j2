@@ -22,7 +22,11 @@ def fetch_and_save_file(consul_url, filename):
     try:
         with contextlib.closing(urlopen(req, timeout=30)) as resp:
             data = json.loads(resp.read().decode('utf-8'))
-            value = base64.b64decode(data[0]['Value'])
+            raw = data[0]['Value']
+            if raw is None:
+                print('Consul key has null value: %s (config may not have been pushed)' % consul_url)
+                exit(1)
+            value = base64.b64decode(raw)
             with open(os.path.join(FILE_DIR, filename), 'wb') as f:
                 f.write(value)
     except HTTPError as e:

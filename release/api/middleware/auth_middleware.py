@@ -5,7 +5,7 @@ from django.utils.deprecation import MiddlewareMixin
 
 UNAUTHORIZED_STATUS = 401
 
-WHITE_LIST_PATH = ["/admin", "/login", "/adminlogin/", "/api/auth/user_login/", "/api/serverIssue/","get_server_options","jira"]
+WHITE_LIST_PATH = ["/admin", "/login", "/adminlogin/", "/api/auth/user_login/", "/api/serverIssue/","get_server_options","jira", "/api/config-mgmt/webhook/"]
 
 RE_LIST_PATH = ["^/api/releasePlan/$"]
 

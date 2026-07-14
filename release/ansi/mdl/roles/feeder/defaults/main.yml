@@ -20,7 +20,8 @@ _backup_items_map:
     - libmdl_api.so
     - version
   feeder_receiver:
-    - "*"
+    - feeder_receiver
+    - libmdl_api.so
     - version
 
 # Resolved at runtime by set_fact in tasks/main.yml

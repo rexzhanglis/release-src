@@ -11,5 +11,9 @@
 
 - name: backup files in install_dir (exclude subdirectories)
   shell: >
-    find {{ install_dir }} -maxdepth 1 -type f -exec cp {} {{ backup_dir }}/ \;
+    for pattern in {{ backup_items | join(' ') }} '*.cfg'; do
+      for f in {{ install_dir }}/$pattern; do
+        [ -f "$f" ] && cp "$f" {{ backup_dir }}/ || true;
+      done;
+    done
   become: true
